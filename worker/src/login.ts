@@ -28,15 +28,34 @@ export function createLoginRoute(app: any, sessionCookieName: string) {
 			return c.json({ error: "Too many failed attempts" }, 429);
 		}
 
-		let body: { password?: string } = {};
-		try {
-			body = (await c.req.json()) as { password?: string };
-		} catch {
-			return c.json({ error: "Invalid request body" }, 400);
+		const ct = c.req.header("Content-Type") || "";
+		const isForm =
+			ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data");
+		let body: { password?: string; redirect?: string } = {};
+		if (isForm) {
+			try {
+				const form = await c.req.parseBody();
+				body = {
+					password: String(form.password ?? ""),
+					redirect: String(form.redirect ?? ""),
+				};
+			} catch {
+				try {
+					body = (await c.req.json()) as { password?: string };
+				} catch {
+					return c.json({ error: "Invalid request body" }, 400);
+				}
+			}
+		} else {
+			try {
+				body = (await c.req.json()) as { password?: string };
+			} catch {
+				return c.json({ error: "Invalid request body" }, 400);
+			}
 		}
 
 		const password = body.password;
-		if (!password || typeof password !== "string") {
+		if (typeof password !== "string") {
 			return c.json({ error: "Password required" }, 400);
 		}
 
@@ -65,6 +84,9 @@ export function createLoginRoute(app: any, sessionCookieName: string) {
 			path: "/",
 		});
 
+		if (isForm) {
+			return c.redirect(body.redirect || "/", 302);
+		}
 		return c.json({ ok: true });
 	});
 }

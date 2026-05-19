@@ -1,11 +1,12 @@
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
-import { bearerAuth, cookieAuth, hybridAuth } from "./auth";
+import { bearerAuth, hybridAuth } from "./auth";
 import { createLoginRoute } from "./login";
 import * as consolidate from "./routes/consolidate";
 import { createContextRoute } from "./routes/context";
 import * as ingest from "./routes/ingest";
 import { createMemoriesRoute } from "./routes/memories";
+import { createWebUiRoute } from "./routes/webui";
 
 /* ────────── Wire auto-consolidation trigger ────────── */
 ingest.setConsolidationTrigger(
@@ -67,6 +68,9 @@ app.get("/health", (c) => c.json({ ok: true }));
 /* ────────── Login (unprotected) ────────── */
 createLoginRoute(app, "divmemory_session");
 
+/* ────────── Web UI routes ────────── */
+createWebUiRoute(app);
+
 /* ────────── Ingest route ────────── */
 ingest.createIngestRoute(app, undefined, {
 	getEnv: (c) => ({
@@ -88,9 +92,6 @@ consolidate.createConsolidateRoute(app, undefined, {
 
 /* ────────── Memory CRUD routes ────────── */
 createMemoriesRoute(app);
-
-/* ────────── Web UI index (cookie-protected) ────────── */
-app.get("/", cookieAuth("divmemory_session"), (c) => c.text("divmemory web ui"));
 
 /* ────────── Cron handler ────────── */
 async function scheduled(

@@ -22,7 +22,7 @@ async function hmacSign(message: string, secret: string): Promise<string> {
 	return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
-async function verifyCsrfToken(
+export async function verifyCsrfToken(
 	token: string,
 	secret: string,
 ): Promise<{ valid: boolean; value: string | null }> {

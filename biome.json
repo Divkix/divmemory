@@ -36,8 +36,14 @@
 		}
 	},
 	"files": {
-		"include": ["**"],
-		"ignoreUnknown": true,
-		"ignore": ["**/.wrangler", "**/node_modules", "**/dist", "**/build", "**/drizzle"]
+		"includes": ["**"],
+		"experimentalScannerIgnores": [
+			"**/.wrangler",
+			"**/node_modules",
+			"**/dist",
+			"**/build",
+			"**/drizzle"
+		],
+		"ignoreUnknown": true
 	}
 }
