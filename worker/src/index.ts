@@ -1,10 +1,21 @@
+import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bearerAuth, cookieAuth, hybridAuth } from "./auth";
 import { csrfValidate } from "./csrf";
 import { createLoginRoute } from "./login";
-import { createConsolidateRoute } from "./routes/consolidate";
+import * as consolidate from "./routes/consolidate";
 import { createContextRoute } from "./routes/context";
-import { createIngestRoute } from "./routes/ingest";
+import * as ingest from "./routes/ingest";
+
+/* ────────── Wire auto-consolidation trigger ────────── */
+ingest.setConsolidationTrigger(
+	(projectId: string, db: Parameters<typeof consolidate.runConsolidation>[1], c: unknown) => {
+		void consolidate.runConsolidation(projectId, db, {
+			FIREWORKS_API_KEY: (c as { env: Record<string, string> }).env.FIREWORKS_API_KEY ?? "",
+			FIREWORKS_MODEL: (c as { env: Record<string, string> }).env.FIREWORKS_MODEL ?? "",
+		});
+	},
+);
 
 const app = new Hono();
 
@@ -57,7 +68,7 @@ app.get("/health", (c) => c.json({ ok: true }));
 createLoginRoute(app, "divmemory_session");
 
 /* ────────── Ingest route ────────── */
-createIngestRoute(app, undefined, {
+ingest.createIngestRoute(app, undefined, {
 	getEnv: (c) => ({
 		FIREWORKS_API_KEY: (c.env as Record<string, string>).FIREWORKS_API_KEY,
 		FIREWORKS_MODEL: (c.env as Record<string, string>).FIREWORKS_MODEL,
@@ -68,7 +79,7 @@ createIngestRoute(app, undefined, {
 createContextRoute(app);
 
 /* ────────── Consolidation route ────────── */
-createConsolidateRoute(app, undefined, {
+consolidate.createConsolidateRoute(app, undefined, {
 	getEnv: (c) => ({
 		FIREWORKS_API_KEY: (c.env as Record<string, string>).FIREWORKS_API_KEY,
 		FIREWORKS_MODEL: (c.env as Record<string, string>).FIREWORKS_MODEL,
@@ -83,4 +94,20 @@ app.delete("/memories/:id", csrfValidate("csrf_token"), (c) => c.json({ ok: true
 /* ────────── Web UI index (cookie-protected) ────────── */
 app.get("/", cookieAuth("divmemory_session"), (c) => c.text("divmemory web ui"));
 
-export default app;
+/* ────────── Cron handler ────────── */
+async function scheduled(
+	_event: ScheduledEvent,
+	env: { DB: D1Database; FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
+	_ctx: Pick<ExecutionContext, "waitUntil">,
+): Promise<void> {
+	const db = drizzle(env.DB);
+	await consolidate.runCronConsolidation(db, {
+		FIREWORKS_API_KEY: env.FIREWORKS_API_KEY ?? "",
+		FIREWORKS_MODEL: env.FIREWORKS_MODEL ?? "",
+	});
+}
+
+export default {
+	fetch: app.fetch,
+	scheduled,
+};
