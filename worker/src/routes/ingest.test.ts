@@ -409,6 +409,106 @@ describe("ingest endpoint", () => {
 		});
 	});
 
+	describe("crash recovery — session inserted before extraction", () => {
+		it("session row with raw_text exists before extraction completes", async () => {
+			const app2 = createIngestAppWithMock(testDb.db, {
+				getEnv: () => ({
+					FIREWORKS_API_KEY: "key",
+					FIREWORKS_MODEL: "test-model",
+				}),
+			});
+			const { ctx, awaitAll } = mockExecCtx();
+
+			// Mock fetch to hang so we can inspect DB mid-extraction
+			const origFetch = globalThis.fetch;
+			let resolveFetch!: (r: Response) => void;
+			const fetchPromise = new Promise<Response>((resolve) => {
+				resolveFetch = resolve;
+			});
+			globalThis.fetch = async () => fetchPromise;
+
+			try {
+				const body = {
+					session_id: "sess-mid-extract",
+					project_id: "proj/mid",
+					conversation: "User: hello recovery\n\nAssistant: hi",
+				};
+				const req = new Request("http://localhost/ingest", {
+					method: "POST",
+					headers: authHeaders(),
+					body: JSON.stringify(body),
+				});
+				const res = await app2.fetch(req, envVars() as unknown as Record<string, string>, ctx);
+				expect(res.status).toBe(200);
+
+				// Allow microtask queue to run insertSessionAndProject
+				await new Promise<void>((r) => setTimeout(r, 30));
+
+				const sess = testDb.db
+					.select()
+					.from(sessions)
+					.where(eq(sessions.id, "sess-mid-extract"))
+					.get();
+				expect(sess).toBeDefined();
+				expect(sess?.rawText).toBe(body.conversation);
+				expect(sess?.consolidated).toBe(0);
+				expect(sess?.extractionError).toBeNull();
+
+				// Unblock fetch so awaitAll resolves
+				resolveFetch(
+					new Response(
+						JSON.stringify({
+							choices: [{ message: { content: JSON.stringify({ facts: [] }) } }],
+						}),
+						{ status: 200, headers: { "Content-Type": "application/json" } },
+					),
+				);
+				await awaitAll();
+			} finally {
+				globalThis.fetch = origFetch;
+			}
+		});
+
+		it("crash during extraction leaves recoverable session with consolidated=-1", async () => {
+			const app2 = createIngestAppWithMock(testDb.db, {
+				getEnv: () => ({
+					FIREWORKS_API_KEY: "bad-key",
+					FIREWORKS_MODEL: "test-model",
+				}),
+			});
+			const { ctx, awaitAll } = mockExecCtx();
+
+			// Mock fetch to return HTTP 500 (simulating Firepass failure = crash-like error)
+			const origFetch = globalThis.fetch;
+			globalThis.fetch = async () =>
+				new Response("Internal Server Error", { status: 500, statusText: "Internal Server Error" });
+
+			try {
+				const body = {
+					session_id: "sess-crash",
+					project_id: "proj/crash",
+					conversation: "User: hello crash\n\nAssistant: hi",
+				};
+				const req = new Request("http://localhost/ingest", {
+					method: "POST",
+					headers: authHeaders(),
+					body: JSON.stringify(body),
+				});
+				await app2.fetch(req, envVars() as unknown as Record<string, string>, ctx);
+				await awaitAll();
+
+				const sess = testDb.db.select().from(sessions).where(eq(sessions.id, "sess-crash")).get();
+				expect(sess).toBeDefined();
+				expect(sess?.rawText).toBe(body.conversation);
+				expect(sess?.consolidated).toBe(-1);
+				expect(sess?.extractionError).not.toBeNull();
+				expect(sess?.extractionError).not.toBe("Firepass extraction failed");
+			} finally {
+				globalThis.fetch = origFetch;
+			}
+		});
+	});
+
 	describe("extraction_error contains raw Firepass response on simulated failure", () => {
 		it("stores raw Firepass response text on HTTP failure", async () => {
 			const app2 = createIngestAppWithMock(testDb.db, {

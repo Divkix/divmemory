@@ -309,24 +309,11 @@ function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
 	consolidationTrigger(projectId, db, c);
 }
 
-/* ───────── atomic extraction result processor ───────── */
+/* ───────── split atomic DB operations: pre-insert (session with raw_text) + post-extraction update ───────── */
 
-async function processExtractionResult(
-	db: DbLike,
-	body: IngestBody,
-	result: ExtractionResult,
-	now: string,
-): Promise<number> {
+async function insertSessionAndProject(db: DbLike, body: IngestBody, now: string): Promise<void> {
 	const projectId = body.project_id;
-	const sessionId = body.session_id;
-
-	let factsWritten = 0;
-
-	// If extraction failed entirely, we still need to update session status
-	const isExtractionError = result.error || !result.extracted;
-
 	await runAtomic(db, async (tx, addStmt) => {
-		/* 1. Upsert project */
 		const existingProject = tx
 			.select({ id: projects.id })
 			.from(projects)
@@ -355,10 +342,9 @@ async function processExtractionResult(
 			);
 		}
 
-		/* 2. Insert session */
 		addStmt(
 			tx.insert(sessions).values({
-				id: sessionId,
+				id: body.session_id,
 				projectId,
 				source: body.source || "droid",
 				rawText: body.conversation,
@@ -369,8 +355,22 @@ async function processExtractionResult(
 				createdAt: now,
 			}),
 		);
+	});
+}
 
-		/* 3. Extract facts + dedup + persist memories */
+async function processExtractionAfter(
+	db: DbLike,
+	body: IngestBody,
+	result: ExtractionResult,
+	now: string,
+): Promise<number> {
+	const projectId = body.project_id;
+	const sessionId = body.session_id;
+
+	let factsWritten = 0;
+	const isExtractionError = result.error || !result.extracted;
+
+	await runAtomic(db, async (tx, addStmt) => {
 		if (isExtractionError) {
 			const rawResponse = result.rawResponse ?? result.error ?? "Firepass extraction failed";
 			addStmt(
@@ -483,10 +483,16 @@ export function createIngestRoute(
 
 		const doIngest = async () => {
 			try {
-				// Extraction happens OUTSIDE the DB transaction (network call cannot be rolled back)
+				// Step 1: Insert project + session row with raw_text BEFORE extraction
+				// This ensures crash recovery: if Worker crashes mid-extraction,
+				// consolidation can pick up sessions with raw_text but no facts.
+				await insertSessionAndProject(dbCtx, body, now);
+
+				// Step 2: Firepass extraction (network call, outside DB transaction)
 				const result = await extractFacts(body.conversation, fwKey, fwModel);
-				// All DB writes are a single atomic batch / tx
-				const factsWritten = await processExtractionResult(dbCtx, body, result, now);
+
+				// Step 3: Update session with extraction results (atomic batch / tx)
+				const factsWritten = await processExtractionAfter(dbCtx, body, result, now);
 
 				// ── auto-consolidation trigger (outside atomic tx) ──
 				const unconsol = unconsolidatedCount(body.project_id, dbCtx);
@@ -496,7 +502,7 @@ export function createIngestRoute(
 				return factsWritten;
 			} catch (e) {
 				const errMsg = e instanceof Error ? e.message : String(e);
-				// Update session as error (this is itself a single atomic batch for D1)
+				// Update session as error (atomic batch for D1)
 				await runAtomic(dbCtx, async (tx, addStmt) => {
 					addStmt(
 						tx
