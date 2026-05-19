@@ -97,8 +97,11 @@ function readCachedContext(projectId) {
 function writeCachedContext(projectId, text) {
 	if (!text?.trim()) return;
 	const path = cachePathForProject(projectId);
-	mkdirSync(join(getDivmemoryHome(), "cache"), { recursive: true });
-	writeFileSync(path, text.endsWith("\n") ? text : `${text}\n`, "utf-8");
+	mkdirSync(join(getDivmemoryHome(), "cache"), { recursive: true, mode: 0o700 });
+	writeFileSync(path, text.endsWith("\n") ? text : `${text}\n`, {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
 }
 
 /**
@@ -175,12 +178,13 @@ export async function processSessionStart(stdinData, deps = {}) {
 			return { exitCode: 0 };
 		}
 
-		if (cached.trim()) {
-			stdout(`${cached.trimEnd()}\n`);
-			writeCachedContext(projectId, text);
-		} else {
+		if (text.trim()) {
 			stdout(`${text.trimEnd()}\n`);
 			writeCachedContext(projectId, text);
+		} else if (cached.trim()) {
+			stdout(`${cached.trimEnd()}\n`);
+		} else {
+			writeFallback(stdout);
 		}
 	} catch (err) {
 		stderr(`[divmemory] Network error fetching context: ${err.message}`);

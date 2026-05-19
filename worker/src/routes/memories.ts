@@ -59,14 +59,14 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const now = nowISO();
 		const projectId = body.project_id;
 
-		const existingRows = dbCtx
+		const existingRows = (await dbCtx
 			.select()
 			.from(memories)
 			.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-			.all() as Array<{ id: string; content: string | null }>;
+			.all()) as Array<{ id: string; content: string | null }>;
 		for (const row of existingRows) {
 			if (row.content && jaccardSimilarity(body.content.trim(), row.content) > 0.6) {
-				dbCtx
+				await dbCtx
 					.update(memories)
 					.set({
 						updatedAt: now,
@@ -85,13 +85,13 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const memoryId = crypto.randomUUID();
 		const sessionId = `manual:${memoryId}`;
 
-		const project = dbCtx.select().from(projects).where(eq(projects.id, projectId)).get() as
+		const project = (await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get()) as
 			| { id: string }
 			| undefined;
 		if (project) {
-			dbCtx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)).run();
+			await dbCtx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)).run();
 		} else {
-			dbCtx
+			await dbCtx
 				.insert(projects)
 				.values({
 					id: projectId,
@@ -103,7 +103,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 				.run();
 		}
 
-		dbCtx
+		await dbCtx
 			.insert(sessions)
 			.values({
 				id: sessionId,
@@ -118,7 +118,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 			})
 			.run();
 
-		dbCtx
+		await dbCtx
 			.insert(memories)
 			.values({
 				id: memoryId,

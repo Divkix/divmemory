@@ -632,7 +632,10 @@ const MainPage: FC<{
 								Search
 							</button>
 							{searchQuery ? (
-								<a href={`/?project=${encodeURIComponent(pid)}`} class="btn btn-secondary">
+								<a
+									href={`/?project=${encodeURIComponent(pid)}${showArchived ? "&archived=1" : ""}`}
+									class="btn btn-secondary"
+								>
 									Clear
 								</a>
 							) : undefined}

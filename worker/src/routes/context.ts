@@ -165,7 +165,12 @@ export function createContextRoute(app: any, db?: DbLike) {
 		}
 
 		const factCount = rows.length;
-		const updatedAt = rows.length > 0 ? rows[0].updatedAt || nowISO() : nowISO();
+		const latestRow = rows.reduce((max, row) => {
+			if (!row.updatedAt) return max;
+			if (!max || row.updatedAt > max) return row.updatedAt;
+			return max;
+		}, null as string | null);
+		const updatedAt = latestRow || nowISO();
 
 		// Build sections in consistent topic order
 		const sections: Array<{ label: string; text: string; factCount: number }> = [];

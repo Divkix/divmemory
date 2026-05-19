@@ -76,8 +76,11 @@ function readCache(projectId) {
 
 function writeCache(projectId, text) {
 	if (!text?.trim()) return;
-	mkdirSync(join(divmemoryHome(), "cache"), { recursive: true });
-	writeFileSync(cachePath(projectId), text.endsWith("\n") ? text : `${text}\n`, "utf-8");
+	mkdirSync(join(divmemoryHome(), "cache"), { recursive: true, mode: 0o700 });
+	writeFileSync(cachePath(projectId), text.endsWith("\n") ? text : `${text}\n`, {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
 }
 
 async function postIngest(fetch_, url, key, body) {
@@ -100,8 +103,8 @@ async function postIngest(fetch_, url, key, body) {
 
 async function appendQueue(entry) {
 	const path = queuePath();
-	await mkdir(dirname(path), { recursive: true });
-	await appendFile(path, `${JSON.stringify(entry)}\n`, "utf-8");
+	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	await appendFile(path, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 });
 }
 
 async function flushQueue(fetch_, url, key, stderr) {
@@ -139,7 +142,10 @@ async function flushQueue(fetch_, url, key, stderr) {
 	}
 	const remaining = failedAt === -1 ? [] : lines.slice(failedAt);
 	const tmp = `${path}.tmp`;
-	await writeFile(tmp, remaining.length > 0 ? `${remaining.join("\n")}\n` : "", "utf-8");
+	await writeFile(tmp, remaining.length > 0 ? `${remaining.join("\n")}\n` : "", {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
 	await rename(tmp, path);
 }
 
@@ -256,8 +262,12 @@ export async function processSessionStart(stdinData, deps = {}) {
 			stdout(cached.trim() ? `${cached.trimEnd()}\n` : "\n");
 			return { exitCode: 0 };
 		}
-		stdout(`${(cached.trim() ? cached : text).trimEnd()}\n`);
-		writeCache(projectId, text);
+		if (text.trim()) {
+			stdout(`${text.trimEnd()}\n`);
+			writeCache(projectId, text);
+		} else {
+			stdout(cached.trim() ? `${cached.trimEnd()}\n` : "\n");
+		}
 	} catch (err) {
 		stderr(`[divmemory] Network error fetching context: ${err.message}`);
 		stdout(cached.trim() ? `${cached.trimEnd()}\n` : "\n");

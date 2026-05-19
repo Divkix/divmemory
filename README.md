@@ -158,7 +158,7 @@ The web UI is available at your Worker root URL. Log in with `DIVMEMORY_WEB_PASS
 
 The Droid hooks keep local state under `~/.divmemory` by default:
 
-```
+```text
 ~/.divmemory/
 ├── cache/        # Last fetched context per project, printed instantly on SessionStart
 └── queue.jsonl   # SessionEnd payloads waiting for retry when the Worker is offline

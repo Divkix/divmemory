@@ -170,8 +170,8 @@ async function postIngest(fetch_, workerUrl, apiKey, body) {
 
 async function appendQueue(entry) {
 	const queuePath = getQueuePath();
-	await mkdir(dirname(queuePath), { recursive: true });
-	await appendFile(queuePath, `${JSON.stringify(entry)}\n`, "utf-8");
+	await mkdir(dirname(queuePath), { recursive: true, mode: 0o700 });
+	await appendFile(queuePath, `${JSON.stringify(entry)}\n`, { encoding: "utf-8", mode: 0o600 });
 }
 
 async function flushQueue(fetch_, workerUrl, apiKey, stderr) {
@@ -214,7 +214,10 @@ async function flushQueue(fetch_, workerUrl, apiKey, stderr) {
 
 	const remaining = failedAt === -1 ? [] : lines.slice(failedAt);
 	const tmpPath = `${queuePath}.tmp`;
-	await writeFile(tmpPath, remaining.length > 0 ? `${remaining.join("\n")}\n` : "", "utf-8");
+	await writeFile(tmpPath, remaining.length > 0 ? `${remaining.join("\n")}\n` : "", {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
 	await rename(tmpPath, queuePath);
 }
 

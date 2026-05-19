@@ -450,7 +450,7 @@ describe("session-start hook", () => {
 			});
 
 			expect(result.exitCode).toBe(0);
-			expect(capturedStdout.join("")).toContain("## divmemory — Cached");
+			expect(capturedStdout.join("")).toContain("## divmemory — Fresh");
 			expect(fetchCalls).toHaveLength(1);
 			expect(readFileSync(cachePath, "utf-8")).toContain("## divmemory — Fresh");
 		});
