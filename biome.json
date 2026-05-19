@@ -37,6 +37,7 @@
 	},
 	"files": {
 		"include": ["**"],
-		"ignoreUnknown": true
+		"ignoreUnknown": true,
+		"ignore": ["**/.wrangler", "**/node_modules", "**/dist", "**/build", "**/drizzle"]
 	}
 }
