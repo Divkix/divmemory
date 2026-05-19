@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { bearerAuth, cookieAuth, hybridAuth } from "./auth";
 import { csrfValidate } from "./csrf";
 import { createLoginRoute } from "./login";
+import { createConsolidateRoute } from "./routes/consolidate";
 import { createContextRoute } from "./routes/context";
 import { createIngestRoute } from "./routes/ingest";
 
@@ -66,8 +67,15 @@ createIngestRoute(app, undefined, {
 /* ────────── Context route ────────── */
 createContextRoute(app);
 
+/* ────────── Consolidation route ────────── */
+createConsolidateRoute(app, undefined, {
+	getEnv: (c) => ({
+		FIREWORKS_API_KEY: (c.env as Record<string, string>).FIREWORKS_API_KEY,
+		FIREWORKS_MODEL: (c.env as Record<string, string>).FIREWORKS_MODEL,
+	}),
+});
+
 /* ────────── Stub protected routes — implemented by other features ────────── */
-app.post("/consolidate", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));
 app.get("/memories", (c) => c.json({ memories: [] }));
 app.patch("/memories/:id", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));
 app.delete("/memories/:id", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));

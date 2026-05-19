@@ -5,6 +5,8 @@ import { memories, projects, sessions } from "../schema";
 
 /* ───────── types ───────── */
 
+export type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
+
 export interface IngestBody {
 	session_id: string;
 	project_id: string;
@@ -233,15 +235,16 @@ async function dedupFacts(
 
 /* ───────── helpers: auto-consolidation trigger ───────── */
 
-type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
-
-export function setConsolidationTrigger(fn: (projectId: string, db: DbLike) => void) {
+export function setConsolidationTrigger(
+	fn: (projectId: string, db: DbLike, c: unknown) => void | Promise<void>,
+) {
 	consolidationTrigger = fn;
 }
 
-let consolidationTrigger: (projectId: string, db: DbLike) => void = (
+let consolidationTrigger: (projectId: string, db: DbLike, c: unknown) => void | Promise<void> = (
 	_projectId: string,
 	_db: DbLike,
+	_c: unknown,
 ) => {
 	// default no-op — real trigger wired by the consolidation feature
 };
@@ -255,8 +258,8 @@ function unconsolidatedCount(projectId: string, db: DbLike): number {
 	return row?.count ?? 0;
 }
 
-function triggerConsolidation(projectId: string, db: DbLike) {
-	consolidationTrigger(projectId, db);
+function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
+	consolidationTrigger(projectId, db, c);
 }
 
 /* ───────── route ───────── */
@@ -418,7 +421,7 @@ export function createIngestRoute(
 		// ── auto-consolidation trigger ──
 		const unconsol = unconsolidatedCount(body.project_id, dbCtx);
 		if (unconsol >= 5) {
-			triggerConsolidation(body.project_id, dbCtx);
+			triggerConsolidation(body.project_id, dbCtx, c);
 		}
 
 		return c.json({ ok: true, facts_written: factsWritten }, 200);
