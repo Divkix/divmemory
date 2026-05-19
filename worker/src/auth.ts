@@ -75,6 +75,16 @@ async function timingSafeEqualStr(a: string, b: string): Promise<boolean> {
 
 export { timingSafeEqualStr };
 
+/**
+ * Detect whether the current request is served over HTTPS.
+ * Used to set `secure` flag on cookies; false for localhost dev.
+ */
+export function isSecureContext(c: {
+	req: { url: string; header: (name: string) => string | undefined };
+}): boolean {
+	return c.req.url.startsWith("https://") || c.req.header("X-Forwarded-Proto") === "https";
+}
+
 function bearerKey(c: Context): string {
 	return (c.env.DIVMEMORY_API_KEY as string | undefined) || "";
 }

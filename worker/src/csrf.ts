@@ -79,6 +79,12 @@ export const csrfToken =
 	async (c) => {
 		const secret = csrfSecret(c);
 		const token = await generateCsrfToken(secret);
-		c.header("Set-Cookie", `${cookieName}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/`);
+		const secure =
+			c.req.url.startsWith("https://") || c.req.header("X-Forwarded-Proto") === "https";
+		const secureFlag = secure ? "; Secure" : "";
+		c.header(
+			"Set-Cookie",
+			`${cookieName}=${token}; HttpOnly${secureFlag}; SameSite=Strict; Path=/`,
+		);
 		return c.json({ csrf_token: token.split(":")[0] });
 	};

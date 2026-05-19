@@ -160,16 +160,17 @@ describe("Cookie auth", () => {
 		return honoApp.fetch(req, env);
 	}
 
-	it("valid password sets cookie with HttpOnly, Secure, SameSite=Strict", async () => {
+	it("valid password sets cookie with HttpOnly, SameSite=Strict", async () => {
 		const app = createTestApp();
 		const res = await doLogin(app);
 		expect(res.status).toBe(200);
 		const setCookieHeader = res.headers.get("Set-Cookie");
 		expect(setCookieHeader).toBeTruthy();
 		expect(setCookieHeader).toContain("HttpOnly");
-		expect(setCookieHeader).toContain("Secure");
 		expect(setCookieHeader).toContain("SameSite=Strict");
 		expect(setCookieHeader).toMatch(/Max-Age=|Expires=/);
+		// http:// requests omit Secure; https:// include it
+		expect(setCookieHeader).not.toContain("Secure");
 	});
 
 	it("invalid password returns 401 and no cookie", async () => {

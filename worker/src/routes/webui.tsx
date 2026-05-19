@@ -5,7 +5,7 @@ import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { FC, PropsWithChildren } from "hono/jsx";
-import { verifyCookie } from "../auth";
+import { isSecureContext, verifyCookie } from "../auth";
 import { generateCsrfToken, verifyCsrfToken } from "../csrf";
 import { memories, projects, sessions } from "../schema";
 import * as consolidate from "./consolidate";
@@ -101,7 +101,7 @@ async function makeCsrf(c: Context): Promise<string> {
 	const [csrfValue] = csrfFull.split(":");
 	setCookie(c, "csrf_cookie", csrfFull, {
 		httpOnly: true,
-		secure: true,
+		secure: isSecureContext(c),
 		sameSite: "Strict",
 		path: "/",
 		maxAge: 3600,
@@ -806,7 +806,7 @@ export function createWebUiRoute(
 
 	/* ── POST logout ── */
 	app.post("/logout", auth, async (c: Context) => {
-		deleteCookie(c, SESSION_COOKIE, { path: "/" });
+		deleteCookie(c, SESSION_COOKIE, { path: "/", secure: isSecureContext(c), sameSite: "Strict" });
 		return c.redirect("/login", 302);
 	});
 }

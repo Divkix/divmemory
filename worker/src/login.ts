@@ -2,6 +2,7 @@ import { setCookie } from "hono/cookie";
 import {
 	checkRateLimit,
 	getClientIP,
+	isSecureContext,
 	recordFailedAttempt,
 	recordSuccessfulAttempt,
 	signCookie,
@@ -78,7 +79,7 @@ export function createLoginRoute(app: any, sessionCookieName: string) {
 
 		setCookie(c, sessionCookieName, signed, {
 			httpOnly: true,
-			secure: true,
+			secure: isSecureContext(c),
 			sameSite: "Strict",
 			maxAge: maxAgeSec,
 			path: "/",
