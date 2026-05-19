@@ -1,0 +1,2 @@
+// Bootstrap CLI entrypoint
+export {};

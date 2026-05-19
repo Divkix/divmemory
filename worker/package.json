@@ -1,0 +1,28 @@
+{
+	"name": "@divmemory/worker",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"scripts": {
+		"dev": "wrangler dev --port 8787",
+		"deploy": "wrangler deploy",
+		"build": "tsc --noEmit",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"lint": "biome check ."
+	},
+	"dependencies": {
+		"drizzle-orm": "^0.42.0",
+		"hono": "^4.8.0",
+		"zod": "^3.24.3"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "^4.20250410.0",
+		"drizzle-kit": "^0.31.0",
+		"typescript": "^5.7.3",
+		"vitest": "^3.2.2",
+		"wrangler": "^4.92.0"
+	}
+}

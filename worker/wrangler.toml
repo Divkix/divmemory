@@ -1,0 +1,12 @@
+name = "divmemory"
+main = "src/index.ts"
+compatibility_date = "2025-04-10"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = "bun run build"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "divmemory"
+database_id = ""
