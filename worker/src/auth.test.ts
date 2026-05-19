@@ -345,7 +345,7 @@ describe("CSRF protection", () => {
 	});
 
 	it("POST /consolidate with cookie but no CSRF token returns 403", async () => {
-		const { Hono } = require("hono") as typeof import("hono");
+		const { Hono } = await import("hono");
 		const csrfApp = new Hono();
 		// Mount a fake cookie-auth layer first so the cookie exists
 		csrfApp.post("/consolidate", csrfValidate("csrf_token"), csrfStub);

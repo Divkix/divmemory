@@ -212,7 +212,6 @@ const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, children }) =
 					content="Persistent cross-session memory for coding agent"
 				/>
 				<meta property="og:type" content="website" />
-				{/* biome-ignore lint/security/noDangerouslySetInnerHtml: Global CSS is a static constant, not user content */}
 				<style dangerouslySetInnerHTML={{ __html: GLOBAL_CSS }} />
 			</head>
 			<body>{children}</body>
@@ -308,7 +307,6 @@ const MemoryCard: FC<{
 					<div class="row">
 						<select name="topic">
 							{VALID_TOPICS.map((t) => (
-								// biome-ignore lint/correctness/useJsxKeyInIterable: hono/jsx does not require keys like React
 								<option value={t} selected={topic === t ? true : undefined}>
 									{TOPIC_LABELS[t]}
 								</option>
@@ -441,7 +439,6 @@ const SessionLogComponent: FC<{ rows: SessionRow[] }> = ({ rows }) => {
 							? "unconsolidated"
 							: "consolidated";
 				return (
-					// biome-ignore lint/correctness/useJsxKeyInIterable: hono/jsx does not require keys like React
 					<div class="session-row">
 						<span class="id">{r.id}</span>
 						<span class="date">{r.createdAt ?? ""}</span>
@@ -522,7 +519,6 @@ const MainPage: FC<{
 			}
 
 			const topicFrags = TOPIC_ORDER.map((t) => (
-				// biome-ignore lint/correctness/useJsxKeyInIterable: hono/jsx does not require keys like React
 				<TopicGroup
 					topic={t}
 					memories={grouped[t]}

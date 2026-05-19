@@ -342,8 +342,8 @@ export async function runCronConsolidation(
 
 /* ───────── route ───────── */
 
-function getDb(c: { env: { DB: D1Database } }) {
-	const { drizzle } = require("drizzle-orm/d1");
+async function getDb(c: { env: { DB: D1Database } }) {
+	const { drizzle } = await import("drizzle-orm/d1");
 	return drizzle(c.env.DB);
 }
 
@@ -360,7 +360,7 @@ export function createConsolidateRoute(
 ) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types are runtime-specific
 	app.post("/consolidate", async (c: any) => {
-		const dbCtx = db || getDb(c);
+		const dbCtx = db || (await getDb(c));
 
 		let body: { project_id?: string };
 		try {
