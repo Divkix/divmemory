@@ -56,14 +56,16 @@ function getClientIP(c: Context): string {
 	);
 }
 
-// Timing-safe string comparison using Node crypto (available via nodejs_compat)
-// We implement a manual constant-time compare using Uint8Array since
-// crypto.timingSafeEqual expects same-length buffers.
-function timingSafeEqualStr(a: string, b: string): boolean {
+// Timing-safe string comparison using SHA-256 digests.
+// We hash both inputs to fixed-length digests, then compare in constant time
+// with a loop that has no early returns. This prevents leaking secret length
+// via timing side-channels.
+async function timingSafeEqualStr(a: string, b: string): Promise<boolean> {
 	const encoder = new TextEncoder();
-	const bufA = encoder.encode(a);
-	const bufB = encoder.encode(b);
-	if (bufA.length !== bufB.length) return false;
+	const digestA = await crypto.subtle.digest("SHA-256", encoder.encode(a));
+	const digestB = await crypto.subtle.digest("SHA-256", encoder.encode(b));
+	const bufA = new Uint8Array(digestA);
+	const bufB = new Uint8Array(digestB);
 	let diff = 0;
 	for (let i = 0; i < bufA.length; i++) {
 		diff |= bufA[i] ^ bufB[i];
@@ -142,7 +144,7 @@ export const bearerAuth =
 			return c.json({ error: "Unauthorized — Bearer token required" }, 401);
 		}
 		const token = auth.slice(7).trim();
-		if (!expected || !timingSafeEqualStr(token, expected)) {
+		if (!expected || !(await timingSafeEqualStr(token, expected))) {
 			return c.json({ error: "Unauthorized — invalid token" }, 401);
 		}
 		return next();
@@ -180,7 +182,7 @@ export const hybridAuth =
 		const expected = bearerKey(c);
 		if (auth.startsWith("Bearer ")) {
 			const token = auth.slice(7).trim();
-			if (expected && timingSafeEqualStr(token, expected)) {
+			if (expected && (await timingSafeEqualStr(token, expected))) {
 				return next();
 			}
 			return c.json({ error: "Unauthorized — invalid token" }, 401);

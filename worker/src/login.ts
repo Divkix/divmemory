@@ -41,7 +41,7 @@ export function createLoginRoute(app: any, sessionCookieName: string) {
 		}
 
 		// Timing-safe comparison
-		if (!timingSafeEqualStr(password, expected)) {
+		if (!(await timingSafeEqualStr(password, expected))) {
 			recordFailedAttempt(ip);
 			return c.json({ error: "Invalid credentials" }, 401);
 		}

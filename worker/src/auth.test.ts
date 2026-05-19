@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
-import { bearerAuth, cookieAuth, hybridAuth, signCookie } from "./auth";
+import { describe, expect, it, vi } from "vitest";
+import { bearerAuth, cookieAuth, hybridAuth, signCookie, timingSafeEqualStr } from "./auth";
 import { csrfValidate } from "./csrf";
 import { createLoginRoute } from "./login";
 
@@ -437,6 +437,33 @@ async function createExpiredSignedCookie(
 	const signed = await signCookie(payload, secret);
 	return `${name}=${signed}`;
 }
+
+describe("Timing-safe comparison", () => {
+	it("returns true for identical short strings", async () => {
+		expect(await timingSafeEqualStr("abc", "abc")).toBe(true);
+	});
+
+	it("returns true for identical long strings", async () => {
+		expect(await timingSafeEqualStr("x".repeat(1000), "x".repeat(1000))).toBe(true);
+	});
+
+	it("returns false for different strings of same length", async () => {
+		expect(await timingSafeEqualStr("abc", "def")).toBe(false);
+	});
+
+	it("returns false for different strings of different lengths", async () => {
+		expect(await timingSafeEqualStr("a", "ab")).toBe(false);
+		expect(await timingSafeEqualStr("short", "a much longer string that differs")).toBe(false);
+	});
+
+	it("hashes both inputs before comparing — same comparison path regardless of length", async () => {
+		const digestSpy = vi.spyOn(crypto.subtle, "digest");
+		await timingSafeEqualStr("a", "ab");
+		expect(digestSpy).toHaveBeenCalledWith("SHA-256", expect.any(Uint8Array));
+		expect(digestSpy).toHaveBeenCalledTimes(2);
+		digestSpy.mockRestore();
+	});
+});
 
 async function makeTestCsrf(value: string, secret: string): Promise<string> {
 	const encoder = new TextEncoder();
