@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { bearerAuth, cookieAuth, hybridAuth } from "./auth";
 import { csrfValidate } from "./csrf";
 import { createLoginRoute } from "./login";
+import { createIngestRoute } from "./routes/ingest";
 
 const app = new Hono();
 
@@ -53,9 +54,15 @@ app.get("/health", (c) => c.json({ ok: true }));
 /* ────────── Login (unprotected) ────────── */
 createLoginRoute(app, "divmemory_session");
 
-/* ────────── Stub protected routes — implemented by other features ────────── */
+/* ────────── Ingest route ────────── */
+createIngestRoute(app, undefined, {
+	getEnv: (c) => ({
+		FIREWORKS_API_KEY: (c.env as Record<string, string>).FIREWORKS_API_KEY,
+		FIREWORKS_MODEL: (c.env as Record<string, string>).FIREWORKS_MODEL,
+	}),
+});
 
-app.post("/ingest", (c) => c.json({ ok: true, facts_written: 0 }));
+/* ────────── Stub protected routes — implemented by other features ────────── */
 app.get("/context", (c) => c.text("# context\n"));
 app.post("/consolidate", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));
 app.get("/memories", (c) => c.json({ memories: [] }));
