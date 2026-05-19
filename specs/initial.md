@@ -135,20 +135,20 @@ divmemory/                        # GitHub: divkix/divmemory
 
 ## 4. Plugin Structure
 
-### 4.1 Plugin Manifest — `plugin/.factory-plugin/plugin.json`
+### 4.1 Plugin Manifest — `plugins/divmemory/.factory-plugin/plugin.json`
 
 ```json
 {
   "name": "divmemory",
   "description": "Persistent cross-session memory for Droid. Extracts facts from each session and injects them back on start.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": {
     "name": "divkix"
   }
 }
 ```
 
-### 4.2 Hook Config — `plugin/hooks/hooks.json`
+### 4.2 Hook Config — `plugins/divmemory/hooks/hooks.json`
 
 ```json
 {
@@ -179,7 +179,7 @@ divmemory/                        # GitHub: divkix/divmemory
 
 ## 5. Hook Scripts
 
-### 5.1 SessionEnd — `plugin/hooks/session-end.mjs`
+### 5.1 SessionEnd — `plugins/divmemory/hooks/session-end.mjs`
 
 **Receives** (via stdin, actual Droid hook format):
 
@@ -195,7 +195,8 @@ divmemory/                        # GitHub: divkix/divmemory
 
 **Project identification**: Run `git remote get-url origin` from `cwd`. Use the
 remote URL as the canonical project ID (e.g., `github.com/divkix/my-app`). If
-no git remote (scratch directory), fall back to `path.basename(cwd)`.
+no git remote exists, fall back to a hashed absolute-path slug such as
+`local-3f91ab4c2d10-my-app` to prevent basename collisions.
 
 **Conversation extraction logic**:
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -250,11 +251,15 @@ export async function getProjectId(cwd: string): Promise<string> {
 		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 		return normalized;
 	} catch {
-		return basename(cwd || process.cwd());
+		const absolute = resolve(cwd || process.cwd());
+		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
+		return `local-${hash}-${basename(absolute)}`;
 	}
 }
 
 export function getProjectName(projectId: string): string {
+	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
+	if (localMatch) return localMatch[1] ?? projectId;
 	const lastSlash = projectId.lastIndexOf("/");
 	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
 	return projectId;

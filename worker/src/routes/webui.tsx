@@ -1,5 +1,5 @@
 /** @jsxImportSource hono/jsx */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, like, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
 import type { Context, MiddlewareHandler } from "hono";
@@ -191,6 +191,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;m
 .archived-toggle{margin-bottom:12px}
 .archived-toggle a{font-size:13px;color:#2563eb;text-decoration:none}
 .consolidate-form{margin-bottom:12px}
+.status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.status-item{background:#fff;border:1px solid #e4e4e7;border-radius:8px;padding:10px}
+.status-item .label{display:block;font-size:11px;text-transform:uppercase;color:#71717a}
+.status-item .value{font-size:18px;font-weight:600;color:#18181b}
+.search-form{display:flex;gap:8px;margin-bottom:12px}
+.search-form input{flex:1;padding:8px;border:1px solid #d4d4d8;border-radius:6px;font:inherit}
 .no-projects{color:#71717a;padding:20px}`;
 
 /* ───────── JSX Components ───────── */
@@ -458,12 +464,50 @@ const Flash: FC<{ success: string; error: string }> = ({ success, error }) => {
 	return null;
 };
 
+const ProjectStatus: FC<{
+	activeMemories: number;
+	curatedMemories: number;
+	pendingSessions: number;
+	errorSessions: number;
+}> = ({ activeMemories, curatedMemories, pendingSessions, errorSessions }) => {
+	return (
+		<section class="status-card" aria-label="Project Status">
+			<h3>Project Status</h3>
+			<div class="status-grid">
+				<div class="status-item">
+					<span class="label">Active memories</span>
+					<span class="value">{activeMemories}</span>
+				</div>
+				<div class="status-item">
+					<span class="label">Curated</span>
+					<span class="value">{curatedMemories}</span>
+				</div>
+				<div class="status-item">
+					<span class="label">Pending extraction</span>
+					<span class="value">{pendingSessions}</span>
+				</div>
+				<div class="status-item">
+					<span class="label">Extraction errors</span>
+					<span class="value">{errorSessions}</span>
+				</div>
+			</div>
+		</section>
+	);
+};
+
 const MainPage: FC<{
 	allProjects: { id: string; name: string | null; sessionCount: number | null }[];
 	currentProject: { id: string; name: string | null; sessionCount?: number | null } | undefined;
 	memRows: MemoryRow[];
 	sessionRows: SessionRow[];
 	unconsolidatedCount: number;
+	statusStats: {
+		activeMemories: number;
+		curatedMemories: number;
+		pendingSessions: number;
+		errorSessions: number;
+	};
+	searchQuery: string;
 	editId: string | undefined;
 	deleteId: string | undefined;
 	showArchived: boolean;
@@ -476,6 +520,8 @@ const MainPage: FC<{
 	memRows,
 	sessionRows,
 	unconsolidatedCount,
+	statusStats,
+	searchQuery,
 	editId,
 	deleteId,
 	showArchived,
@@ -572,6 +618,25 @@ const MainPage: FC<{
 							</form>
 						</div>
 						<Flash success={success} error={error} />
+						<ProjectStatus {...statusStats} />
+						<form method="get" action="/" class="search-form">
+							<input type="hidden" name="project" value={pid} />
+							{showArchived ? <input type="hidden" name="archived" value="1" /> : undefined}
+							<input
+								type="search"
+								name="search"
+								value={searchQuery}
+								placeholder="Search memories"
+							/>
+							<button type="submit" class="btn btn-secondary">
+								Search
+							</button>
+							{searchQuery ? (
+								<a href={`/?project=${encodeURIComponent(pid)}`} class="btn btn-secondary">
+									Clear
+								</a>
+							) : undefined}
+						</form>
 						{archivedToggle}
 						{consolidateFrag}
 						{memoriesFrag}
@@ -620,6 +685,7 @@ export function createWebUiRoute(
 		const editId = c.req.query("edit");
 		const deleteId = c.req.query("delete");
 		const showArchived = c.req.query("archived") === "1";
+		const searchQuery = c.req.query("search") || "";
 		const success = c.req.query("success") || "";
 		const error = c.req.query("error") || "";
 
@@ -643,19 +709,27 @@ export function createWebUiRoute(
 		let memRows: MemoryRow[] = [];
 		let sessionRows: SessionRow[] = [];
 		let unconsolidatedCount = 0;
+		let statusStats = {
+			activeMemories: 0,
+			curatedMemories: 0,
+			pendingSessions: 0,
+			errorSessions: 0,
+		};
 		let queriedProjectId: string | undefined;
 
 		if (currentProject) {
 			queriedProjectId = currentProject.id;
+			const conditions = [
+				eq(memories.projectId, queriedProjectId),
+				eq(memories.status, showArchived ? "archived" : "active"),
+			];
+			if (searchQuery.trim()) {
+				conditions.push(like(sql`lower(${memories.content})`, `%${searchQuery.toLowerCase()}%`));
+			}
 			memRows = (await dbCtx
 				.select()
 				.from(memories)
-				.where(
-					and(
-						eq(memories.projectId, queriedProjectId),
-						eq(memories.status, showArchived ? "archived" : "active"),
-					),
-				)
+				.where(and(...conditions))
 				.orderBy(desc(memories.updatedAt))
 				.all()) as unknown as MemoryRow[];
 
@@ -673,6 +747,34 @@ export function createWebUiRoute(
 				.where(and(eq(sessions.projectId, queriedProjectId), eq(sessions.consolidated, 0)))
 				.get()) as { count: number } | undefined;
 			unconsolidatedCount = ucResult?.count ?? 0;
+
+			const activeResult = (await dbCtx
+				.select({ count: sql<number>`count(*)` })
+				.from(memories)
+				.where(and(eq(memories.projectId, queriedProjectId), eq(memories.status, "active")))
+				.get()) as { count: number } | undefined;
+			const curatedResult = (await dbCtx
+				.select({ count: sql<number>`count(*)` })
+				.from(memories)
+				.where(
+					and(
+						eq(memories.projectId, queriedProjectId),
+						eq(memories.status, "active"),
+						eq(memories.curated, 1),
+					),
+				)
+				.get()) as { count: number } | undefined;
+			const errorResult = (await dbCtx
+				.select({ count: sql<number>`count(*)` })
+				.from(sessions)
+				.where(and(eq(sessions.projectId, queriedProjectId), eq(sessions.consolidated, -1)))
+				.get()) as { count: number } | undefined;
+			statusStats = {
+				activeMemories: activeResult?.count ?? 0,
+				curatedMemories: curatedResult?.count ?? 0,
+				pendingSessions: unconsolidatedCount,
+				errorSessions: errorResult?.count ?? 0,
+			};
 
 			if (editId) {
 				const editExists = await dbCtx
@@ -710,6 +812,8 @@ export function createWebUiRoute(
 				memRows={memRows}
 				sessionRows={sessionRows}
 				unconsolidatedCount={unconsolidatedCount}
+				statusStats={statusStats}
+				searchQuery={searchQuery}
 				editId={editId}
 				deleteId={deleteId}
 				showArchived={showArchived}

@@ -6,6 +6,7 @@ import * as consolidate from "./routes/consolidate";
 import { createContextRoute } from "./routes/context";
 import * as ingest from "./routes/ingest";
 import { createMemoriesRoute } from "./routes/memories";
+import { createStatusRoute } from "./routes/status";
 import { createWebUiRoute } from "./routes/webui";
 
 /* ────────── Wire auto-consolidation trigger ────────── */
@@ -58,6 +59,7 @@ app.use("*", async (c, next) => {
 app.use("/ingest", bearerAuth("divmemory_session"));
 app.use("/context", bearerAuth("divmemory_session"));
 app.use("/consolidate", bearerAuth("divmemory_session"));
+app.use("/status", bearerAuth("divmemory_session"));
 app.use("/memories/*", hybridAuth("divmemory_session"));
 app.use("/memories", hybridAuth("divmemory_session"));
 
@@ -92,6 +94,9 @@ consolidate.createConsolidateRoute(app, undefined, {
 
 /* ────────── Memory CRUD routes ────────── */
 createMemoriesRoute(app);
+
+/* ────────── Status route ────────── */
+createStatusRoute(app);
 
 /* ────────── Cron handler ────────── */
 async function scheduled(

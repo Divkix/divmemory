@@ -19,7 +19,6 @@ interface Extracted {
 
 const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/routers/kimi-k2p6-turbo";
 const FIREPASS_TIMEOUT = 30000; // 30s
-const STALE_DAYS = 90;
 const MAX_PROMPT_CHARS = 120_000; // hard cap to avoid Worker crash
 
 const CONSOLIDATION_PROMPT = `You are a memory consolidation engine. Read the existing memories and new session conversations below, then produce a clean, consolidated set of facts for this project.
@@ -170,7 +169,6 @@ export async function runConsolidation(
 		const apiKey = env.FIREWORKS_API_KEY ?? "";
 		const model = env.FIREWORKS_MODEL ?? DEFAULT_FIREWORKS_MODEL;
 		const now = new Date().toISOString();
-		const staleThreshold = new Date(Date.now() - STALE_DAYS * 86_400 * 1000).toISOString();
 
 		/* 1. Read unconsolidated + error-flagged sessions */
 		const pendingRows = (await db
@@ -296,36 +294,7 @@ export async function runConsolidation(
 				.run();
 		}
 
-		/* 6. Auto-archive stale curated facts (>90 days without recent corroboration) */
-		// Re-query because dedup may have refreshed updated_at on corroborated curated facts
-		const curatedFacts = (await db
-			.select()
-			.from(memories)
-			.where(
-				and(
-					eq(memories.projectId, projectId),
-					eq(memories.curated, 1),
-					eq(memories.status, "active"),
-				),
-			)
-			.all()) as Array<{
-			id: string;
-			updatedAt: string | null;
-		}>;
-
-		let archivedCount = 0;
-		for (const cf of curatedFacts) {
-			if (cf.updatedAt && cf.updatedAt < staleThreshold) {
-				await db
-					.update(memories)
-					.set({ status: "archived", updatedAt: now })
-					.where(eq(memories.id, cf.id))
-					.run();
-				archivedCount++;
-			}
-		}
-
-		/* 7. Mark sessions as consolidated and prune raw_text */
+		/* 6. Mark sessions as consolidated and prune raw_text */
 		for (const s of allSessions) {
 			if (includedSessionIds.includes(s.id)) {
 				await db
@@ -336,7 +305,7 @@ export async function runConsolidation(
 			}
 		}
 
-		return { consolidated: includedSessionIds.length, archived: archivedCount };
+		return { consolidated: includedSessionIds.length, archived: 0 };
 	} finally {
 		inFlight.delete(projectId);
 		if (acquiredDbLock) {

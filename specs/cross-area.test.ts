@@ -400,6 +400,10 @@ describe("Cross-Area — Bootstrap + Live Coexistence", () => {
 		const tmpDir = mkdtempSync(join(tmpdir(), "cross-006-"));
 		const innerDir = join(tmpDir, projectId);
 		mkdirSync(innerDir);
+		const { execSync } = await import("node:child_process");
+		execSync(
+			`git -C ${innerDir} init && git -C ${innerDir} remote add origin https://${projectId}.git`,
+		);
 		const transcriptPath = join(innerDir, "transcript.jsonl");
 		writeFileSync(
 			transcriptPath,
@@ -450,6 +454,10 @@ describe("Cross-Area — Bootstrap + Live Coexistence", () => {
 		const tmpDir = mkdtempSync(join(tmpdir(), "cross-007-"));
 		const innerDir = join(tmpDir, projectId);
 		mkdirSync(innerDir);
+		const { execSync } = await import("node:child_process");
+		execSync(
+			`git -C ${innerDir} init && git -C ${innerDir} remote add origin https://${projectId}.git`,
+		);
 		const transcriptPath = join(innerDir, "transcript.jsonl");
 		writeFileSync(
 			transcriptPath,

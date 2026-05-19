@@ -1,3 +1,8 @@
+---
+description: Manage divmemory persistent project memory
+argument-hint: "show | add <fact> [topic] | forget <text> | consolidate | status"
+---
+
 # /memory — Persistent memory management for Droid
 
 Manage the cross-session memory stored in divmemory.
@@ -30,8 +35,8 @@ Fetches the project context from the Worker via `GET /context?project=<id>&max_c
 
 ### add `<fact>` `[topic]`
 Insert a new curated fact manually:
-- `session_id` is a synthetic ID prefixed with `manual-add-`
-- `curated=1`, `confidence=1.0`
+- Calls `POST /memories`
+- The API stores `curated=1`, `confidence=1.0`
 - Topic defaults to `"general"` when omitted
 - The fact goes through the same dedup pipeline as auto-extracted facts
 - If a similar fact exists (Jaccard > 60%), the content is NOT overwritten; only `updated_at` is refreshed
@@ -44,7 +49,7 @@ Reports the result: how many sessions were consolidated and whether any facts we
 Handles the case where nothing to consolidate, printing "Nothing to consolidate." when appropriate.
 
 ### status
-Fetches project statistics from the Worker and displays:
+Fetches project statistics from the Worker via `GET /status?project=<id>` and displays:
 - Session count
 - Active fact count
 - Last sync / last seen timestamp
@@ -55,7 +60,7 @@ If the stats endpoint is unavailable, standard error handling applies.
 All API calls use:
 - **Auth header:** `Authorization: Bearer <DIVMEMORY_API_KEY>`
 - **Worker URL:** the `DIVMEMORY_WORKER_URL` environment variable, or `https://divmemory.divkix.workers.dev` as default
-- **Project ID:** Determined the same way as the SessionEnd / SessionStart hooks (git remote origin, falling back to `cwd` basename)
+- **Project ID:** Determined the same way as the SessionEnd / SessionStart hooks (git remote origin, falling back to a hashed absolute-path local slug)
 
 ## Error handling
 

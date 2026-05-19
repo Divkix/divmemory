@@ -427,6 +427,40 @@ describe("Web UI — Main Page", () => {
 		expect(html).not.toContain("Archived Fact");
 	});
 
+	it("renders project status counts for active memories, pending sessions, and errors", async () => {
+		seedProject(sqlite, "p1", "Project One", 3);
+		seedMemory(sqlite, "p1", "Active Fact", { curated: 1 });
+		seedSession(sqlite, "p1", { id: "pending", consolidated: 0 });
+		seedSession(sqlite, "p1", { id: "failed", consolidated: -1, extractionError: "LLM failed" });
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/?project=p1"), webEnvVars(), {
+			headers,
+		});
+		const html = await res.text();
+		expect(html).toContain("Project Status");
+		expect(html).toContain("Active memories");
+		expect(html).toContain("Curated");
+		expect(html).toContain("Pending extraction");
+		expect(html).toContain("Extraction errors");
+	});
+
+	it("renders search form and filters visible memories by search query", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		seedMemory(sqlite, "p1", "Use Vitest for unit tests");
+		seedMemory(sqlite, "p1", "Use Wrangler for Worker deploys");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(
+			new Request("http://localhost/?project=p1&search=vitest"),
+			webEnvVars(),
+			{ headers },
+		);
+		const html = await res.text();
+		expect(html).toContain('name="search"');
+		expect(html).toContain('value="vitest"');
+		expect(html).toContain("Use Vitest for unit tests");
+		expect(html).not.toContain("Use Wrangler for Worker deploys");
+	});
+
 	it("edit button renders for each memory (VAL-UI-036)", async () => {
 		seedProject(sqlite, "p1");
 		const mid = seedMemory(sqlite, "p1", "Fact 1");

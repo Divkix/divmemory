@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ describe("session-start hook", () => {
 		originalEnv = {
 			DIVMEMORY_API_KEY: process.env.DIVMEMORY_API_KEY,
 			DIVMEMORY_WORKER_URL: process.env.DIVMEMORY_WORKER_URL,
+			DIVMEMORY_HOME: process.env.DIVMEMORY_HOME,
 		};
 		capturedStderr = [];
 		capturedStdout = [];
@@ -150,12 +151,12 @@ describe("session-start hook", () => {
 			expect(id).toBe("github.com/divkix/my-app");
 		});
 
-		it("falls back to basename(cwd) when no git remote (VAL-PLUGIN-043)", async () => {
+		it("falls back to a hashed absolute path slug when no git remote", async () => {
 			const noGitDir = join(tmpDir, "no-git");
 			const { mkdirSync } = await import("node:fs");
 			mkdirSync(noGitDir, { recursive: true });
 			const id = await getProjectId(noGitDir);
-			expect(id).toBe("no-git");
+			expect(id).toMatch(/^local-[a-f0-9]{12}-no-git$/);
 		});
 
 		it("normalizes SSH git@ remote URL (VAL-PLUGIN-044)", async () => {
@@ -423,6 +424,51 @@ describe("session-start hook", () => {
 			const idStart = await getProjectId(gitDir);
 			const idEnd = await getProjectIdEnd(gitDir);
 			expect(idStart).toBe(idEnd);
+		});
+
+		it("prints cached context immediately and refreshes the cache from the Worker", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const projectId = await getProjectId(tmpDir);
+			const cachePath = join(tmpDir, "cache", `${encodeURIComponent(projectId)}.txt`);
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(join(tmpDir, "cache"), { recursive: true });
+			writeFileSync(cachePath, "## divmemory — Cached\n\n- Old fact\n", "utf-8");
+
+			const fetchFn = mockFetch(() =>
+				Promise.resolve(
+					new Response("## divmemory — Fresh\n\n- New fact\n", {
+						status: 200,
+						headers: { "Content-Type": "text/plain" },
+					}),
+				),
+			);
+			const result = await processSessionStart(makeStdin(), {
+				fetch: fetchFn,
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			expect(result.exitCode).toBe(0);
+			expect(capturedStdout.join("")).toContain("## divmemory — Cached");
+			expect(fetchCalls).toHaveLength(1);
+			expect(readFileSync(cachePath, "utf-8")).toContain("## divmemory — Fresh");
+		});
+
+		it("does not leave a cache file when the Worker returns an error", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const projectId = await getProjectId(tmpDir);
+			const cachePath = join(tmpDir, "cache", `${encodeURIComponent(projectId)}.txt`);
+			const fetchFn = mockFetch(() => Promise.resolve(new Response("error", { status: 500 })));
+
+			await processSessionStart(makeStdin(), {
+				fetch: fetchFn,
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			expect(existsSync(cachePath)).toBe(false);
 		});
 	});
 });

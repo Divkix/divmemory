@@ -1,7 +1,8 @@
 import { and, desc, eq, like, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
-import { memories, projects } from "../schema";
+import { memories, projects, sessions } from "../schema";
+import { jaccardSimilarity } from "./ingest";
 
 /* ───────── types ───────── */
 
@@ -27,6 +28,115 @@ function isValidTopic(topic: string): topic is (typeof VALID_TOPICS)[number] {
 
 // biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive for our use case
 export function createMemoriesRoute(app: any, db?: DbLike) {
+	// biome-ignore lint/suspicious/noExplicitAny: Hono context types vary across runtimes
+	app.post("/memories", async (c: any) => {
+		const dbCtx = db || getDb(c);
+
+		let body: { project_id?: string; project_name?: string; content?: string; topic?: string };
+		try {
+			body = (await c.req.json()) as typeof body;
+		} catch {
+			return c.json({ error: "Invalid JSON body" }, 400);
+		}
+
+		if (!body.project_id || typeof body.project_id !== "string" || body.project_id.trim() === "") {
+			return c.json({ error: "Missing or invalid field: project_id" }, 400);
+		}
+		if (!body.content || typeof body.content !== "string" || body.content.trim() === "") {
+			return c.json({ error: "Missing or invalid field: content" }, 400);
+		}
+
+		const topic = body.topic ?? "general";
+		if (!isValidTopic(topic)) {
+			return c.json(
+				{
+					error: `Invalid topic '${topic}'. Valid topics: ${VALID_TOPICS.join(", ")}`,
+				},
+				400,
+			);
+		}
+
+		const now = nowISO();
+		const projectId = body.project_id;
+
+		const existingRows = dbCtx
+			.select()
+			.from(memories)
+			.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
+			.all() as Array<{ id: string; content: string | null }>;
+		for (const row of existingRows) {
+			if (row.content && jaccardSimilarity(body.content.trim(), row.content) > 0.6) {
+				dbCtx
+					.update(memories)
+					.set({
+						updatedAt: now,
+						curated: 1,
+						confidence: 1,
+					})
+					.where(eq(memories.id, row.id))
+					.run();
+				return c.json(
+					{ ok: true, id: row.id, deduped: true, curated: 1, confidence: 1, topic },
+					200,
+				);
+			}
+		}
+
+		const memoryId = crypto.randomUUID();
+		const sessionId = `manual:${memoryId}`;
+
+		const project = dbCtx.select().from(projects).where(eq(projects.id, projectId)).get() as
+			| { id: string }
+			| undefined;
+		if (project) {
+			dbCtx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)).run();
+		} else {
+			dbCtx
+				.insert(projects)
+				.values({
+					id: projectId,
+					name: body.project_name || projectId.split("/").pop() || projectId,
+					sessionCount: 0,
+					createdAt: now,
+					lastSeen: now,
+				})
+				.run();
+		}
+
+		dbCtx
+			.insert(sessions)
+			.values({
+				id: sessionId,
+				projectId,
+				source: "manual-add",
+				rawText: body.content,
+				consolidated: 1,
+				extractionError: null,
+				tokenCount: body.content.length,
+				metadata: JSON.stringify({ manual: true }),
+				createdAt: now,
+			})
+			.run();
+
+		dbCtx
+			.insert(memories)
+			.values({
+				id: memoryId,
+				projectId,
+				sourceSession: sessionId,
+				topic,
+				content: body.content.trim(),
+				confidence: 1,
+				curated: 1,
+				status: "active",
+				createdAt: now,
+				updatedAt: now,
+			})
+			.run();
+
+		return c.json({ ok: true, id: memoryId, curated: 1, confidence: 1, topic }, 201);
+	});
+
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types vary across runtimes
 	app.get("/memories", async (c: any) => {
 		const dbCtx = db || getDb(c);

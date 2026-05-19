@@ -286,8 +286,8 @@ describe("POST /consolidate", () => {
 		});
 	});
 
-	describe("auto-archiving", () => {
-		it("archives curated facts not corroborated in 90+ days", async () => {
+	describe("curated retention", () => {
+		it("keeps old curated facts active unless the user explicitly archives them", async () => {
 			seedSessions(testDb.sqlite, "proj-e", 2);
 			const ninetyOneDaysAgo = new Date(Date.now() - 91 * 86400 * 1000).toISOString();
 			seedMemory(testDb.sqlite, "proj-e", "Old curated fact", {
@@ -307,7 +307,7 @@ describe("POST /consolidate", () => {
 				.where(and(eq(memories.projectId, "proj-e"), eq(memories.curated, 1)))
 				.all() as (typeof memories.$inferInsert)[];
 			expect(memRows.length).toBeGreaterThan(0);
-			expect(memRows[0].status).toBe("archived");
+			expect(memRows[0].status).toBe("active");
 		});
 
 		it("does NOT archive curated facts recently corroborated (<90 days)", async () => {
@@ -548,8 +548,8 @@ describe("runConsolidation — units", () => {
 		});
 	});
 
-	describe("auto-archiving logic", () => {
-		it("archives stale curated facts (>90 days)", async () => {
+	describe("curated retention logic", () => {
+		it("does not archive stale curated facts automatically", async () => {
 			seedSessions(testDb.sqlite, "proj-archive", 2);
 			const oldDate = new Date(Date.now() - 100 * 86400 * 1000).toISOString();
 			seedMemory(testDb.sqlite, "proj-archive", "Stale fact", {
@@ -565,14 +565,14 @@ describe("runConsolidation — units", () => {
 				},
 				makeMockExtractor(),
 			);
-			expect(result.archived).toBe(1);
+			expect(result.archived).toBe(0);
 			const memRows = testDb.db
 				.select()
 				.from(memories)
 				.where(and(eq(memories.projectId, "proj-archive"), eq(memories.curated, 1)))
 				.all() as (typeof memories.$inferInsert)[];
 			expect(memRows.length).toBeGreaterThan(0);
-			expect(memRows[0].status).toBe("archived");
+			expect(memRows[0].status).toBe("active");
 		});
 
 		it("keeps active curated facts when recently corroborated (<90 days)", async () => {

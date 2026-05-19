@@ -1,0 +1,6 @@
+{
+	"name": "divmemory",
+	"description": "Persistent cross-session memory for Droid, backed by your own Cloudflare Worker stack.",
+	"version": "1.0.0",
+	"author": "divkix"
+}

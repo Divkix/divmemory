@@ -1,18 +1,28 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { createHash } from "node:crypto";
+import {
+	appendFile,
+	mkdir,
+	readFile,
+	readFile as readFileAsync,
+	rename,
+	writeFile,
+} from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 
 /**
  * Get the project ID from a directory.
- * Tries `git remote get-url origin` first, falls back to basename(cwd).
+ * Tries `git remote get-url origin` first, falls back to a hashed absolute-path slug.
  * Normalizes .git suffix, trailing slashes, and lowercases the URL.
  */
 export async function getProjectId(cwd) {
+	const projectCwd = cwd || process.cwd();
 	try {
 		const result = await new Promise((resolve, reject) => {
-			const child = spawn("git", ["-C", cwd, "remote", "get-url", "origin"], {
+			const child = spawn("git", ["-C", projectCwd, "remote", "get-url", "origin"], {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let stdout = "";
@@ -46,7 +56,9 @@ export async function getProjectId(cwd) {
 
 		return normalized;
 	} catch {
-		return basename(cwd || process.cwd());
+		const absolute = resolve(projectCwd);
+		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
+		return `local-${hash}-${basename(absolute)}`;
 	}
 }
 
@@ -121,10 +133,89 @@ export function extractConversation(jsonlContent) {
  * If project_id is a path-like string, uses basename; otherwise returns project_id.
  */
 function getProjectName(projectId) {
+	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
+	if (localMatch) return localMatch[1];
 	// If it contains a slash, extract the last segment
 	const lastSlash = projectId.lastIndexOf("/");
 	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
 	return projectId;
+}
+
+function getDivmemoryHome() {
+	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
+}
+
+function getQueuePath() {
+	return join(getDivmemoryHome(), "queue.jsonl");
+}
+
+async function postIngest(fetch_, workerUrl, apiKey, body) {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 30000);
+	try {
+		const res = await fetch_(`${workerUrl}/ingest`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+		return res;
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
+async function appendQueue(entry) {
+	const queuePath = getQueuePath();
+	await mkdir(dirname(queuePath), { recursive: true });
+	await appendFile(queuePath, `${JSON.stringify(entry)}\n`, "utf-8");
+}
+
+async function flushQueue(fetch_, workerUrl, apiKey, stderr) {
+	const queuePath = getQueuePath();
+	let content = "";
+	try {
+		content = await readFileAsync(queuePath, "utf-8");
+	} catch {
+		return;
+	}
+	const lines = content
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	if (lines.length === 0) return;
+
+	let failedAt = -1;
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		let entry;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		try {
+			const res = await postIngest(fetch_, workerUrl, apiKey, entry.body);
+			if (!res.ok) {
+				failedAt = i;
+				const text = await res.text();
+				stderr(`[divmemory] Queued ingest still failing with ${res.status}: ${text}`);
+				break;
+			}
+		} catch (err) {
+			failedAt = i;
+			stderr(`[divmemory] Queued ingest still offline: ${err.message}`);
+			break;
+		}
+	}
+
+	const remaining = failedAt === -1 ? [] : lines.slice(failedAt);
+	const tmpPath = `${queuePath}.tmp`;
+	await writeFile(tmpPath, remaining.length > 0 ? `${remaining.join("\n")}\n` : "", "utf-8");
+	await rename(tmpPath, queuePath);
 }
 
 /**
@@ -188,6 +279,8 @@ export async function processSessionEnd(stdinData, deps = {}) {
 		return { exitCode: 0 };
 	}
 
+	await flushQueue(fetch_, WORKER_URL, API_KEY, stderr);
+
 	const body = {
 		session_id,
 		project_id: projectId,
@@ -198,24 +291,13 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	};
 
 	try {
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-		const res = await fetch_(`${WORKER_URL}/ingest`, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${API_KEY}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(body),
-			signal: controller.signal,
-		});
-
-		clearTimeout(timeoutId);
+		const res = await postIngest(fetch_, WORKER_URL, API_KEY, body);
 
 		if (!res.ok) {
 			const text = await res.text();
 			stderr(`[divmemory] Worker returned ${res.status}: ${text}`);
+			await appendQueue({ body, created_at: new Date().toISOString() });
+			stderr("[divmemory] Queued ingestion for retry.");
 			return { exitCode: 0 };
 		}
 
@@ -236,6 +318,8 @@ export async function processSessionEnd(stdinData, deps = {}) {
 		stderr(`[divmemory] Ingested. facts_written=${responseBody.facts_written ?? 0}`);
 	} catch (err) {
 		stderr(`[divmemory] Network error posting to Worker: ${err.message}`);
+		await appendQueue({ body, created_at: new Date().toISOString() });
+		stderr("[divmemory] Queued ingestion for retry.");
 	}
 
 	return { exitCode: 0 };

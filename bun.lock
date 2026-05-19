@@ -15,7 +15,7 @@
     },
     "cli": {
       "name": "divmemory-bootstrap",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "bin": {
         "divmemory-bootstrap": "./dist/cli.js",
       },
@@ -27,7 +27,7 @@
     },
     "plugin": {
       "name": "@divmemory/plugin",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "devDependencies": {
         "@types/node": "^25.9.0",
         "typescript": "^6.0.3",
@@ -36,7 +36,7 @@
     },
     "worker": {
       "name": "@divmemory/worker",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "dependencies": {
         "drizzle-orm": "^0.45.2",
         "hono": "^4.12.21",

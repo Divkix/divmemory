@@ -507,7 +507,10 @@ export function createIngestRoute(
 			.where(eq(sessions.id, body.session_id))
 			.get();
 		if (existingSession) {
-			return c.json({ ok: true, facts_written: 0 }, 200);
+			return c.json(
+				{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
+				200,
+			);
 		}
 
 		// ── unified atomic transaction: project upsert + session insert + fact extraction + persist ──
@@ -554,13 +557,33 @@ export function createIngestRoute(
 			const wc = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void };
 			if (typeof wc.waitUntil === "function") {
 				wc.waitUntil(doIngest());
+				return c.json(
+					{ ok: true, status: "queued", session_id: body.session_id, facts_written: 0 },
+					200,
+				);
 			} else {
-				await doIngest();
+				const factsWritten = await doIngest();
+				return c.json(
+					{
+						ok: true,
+						status: "processed",
+						session_id: body.session_id,
+						facts_written: factsWritten,
+					},
+					200,
+				);
 			}
 		} catch {
-			await doIngest();
+			const factsWritten = await doIngest();
+			return c.json(
+				{
+					ok: true,
+					status: "processed",
+					session_id: body.session_id,
+					facts_written: factsWritten,
+				},
+				200,
+			);
 		}
-
-		return c.json({ ok: true, facts_written: 0 }, 200);
 	});
 }
