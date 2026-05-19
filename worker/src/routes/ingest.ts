@@ -126,6 +126,39 @@ Conversation:
 {CONVERSATION}
 ---CONVERSATION_END---`;
 
+/**
+ * Safely slices a conversation string from the end to fit within a char limit,
+ * ensuring it starts cleanly at a turn boundary ("User:" or "Assistant:").
+ */
+export function truncateConversationFromEnd(text: string, maxChars = 100_000): string {
+	if (text.length <= maxChars) return text;
+
+	// Take the raw slice from the end
+	let sliced = text.slice(-maxChars);
+
+	// Find the first occurrence of a turn header near the beginning of the slice.
+	// Anchor to turn boundaries by searching for newline-prefixed headers so
+	// substrings inside message content (e.g. code blocks) are not treated
+	// as actual boundaries.
+	const firstUser = sliced.indexOf("\nUser:");
+	const firstAssistant = sliced.indexOf("\nAssistant:");
+
+	let splitIdx = -1;
+	if (firstUser !== -1 && firstAssistant !== -1) {
+		splitIdx = Math.min(firstUser, firstAssistant) + 1;
+	} else if (firstUser !== -1) {
+		splitIdx = firstUser + 1;
+	} else if (firstAssistant !== -1) {
+		splitIdx = firstAssistant + 1;
+	}
+
+	if (splitIdx !== -1) {
+		sliced = sliced.slice(splitIdx);
+	}
+
+	return `[Conversation truncated for length...]\n\n${sliced}`;
+}
+
 export async function extractFacts(
 	rawText: string,
 	apiKey: string,
@@ -134,7 +167,8 @@ export async function extractFacts(
 	if (!apiKey) {
 		return { extracted: { facts: [] }, rawResponse: null };
 	}
-	const prompt = EXTRACTION_PROMPT.replace("{CONVERSATION}", rawText.slice(0, 100_000)); // truncate if huge
+	const prompt = EXTRACTION_PROMPT.replace("{CONVERSATION}", truncateConversationFromEnd(rawText));
+
 	try {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), FIREPASS_TIMEOUT);

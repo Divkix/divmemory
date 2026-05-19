@@ -5,7 +5,12 @@ import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
 import { projects, sessions } from "../schema";
-import { createIngestRoute, jaccardSimilarity, recoverJSON } from "./ingest";
+import {
+	createIngestRoute,
+	jaccardSimilarity,
+	recoverJSON,
+	truncateConversationFromEnd,
+} from "./ingest";
 
 const TEST_API_KEY = "test-api-key-123";
 
@@ -20,7 +25,8 @@ function createTestDb() {
 			name TEXT,
 			session_count INTEGER DEFAULT 0,
 			created_at TEXT,
-			last_seen TEXT
+			last_seen TEXT,
+			consolidation_in_progress INTEGER DEFAULT 0
 		);
 		CREATE TABLE sessions (
 			id TEXT PRIMARY KEY NOT NULL,
@@ -636,5 +642,37 @@ describe("jaccardSimilarity — token overlap dedup", () => {
 		const a = "Uses TypeScript strict mode";
 		const b = "Prefers dark mode for IDE";
 		expect(jaccardSimilarity(a, b)).toBeLessThan(0.6);
+	});
+});
+
+describe("truncateConversationFromEnd", () => {
+	it("returns short conversation unchanged", () => {
+		const convo = "User: hello\n\nAssistant: hi";
+		expect(truncateConversationFromEnd(convo, 100)).toBe(convo);
+	});
+
+	it("truncates massive conversation and starts cleanly at turn boundary", () => {
+		const convo =
+			"User: message 1\n\nAssistant: message 2\n\nUser: message 3\n\nAssistant: message 4";
+		// Let's truncate to a size smaller than the full convo
+		const truncated = truncateConversationFromEnd(convo, 50);
+		expect(truncated).toContain("[Conversation truncated for length...]");
+		// The boundary search should align it to the next User: or Assistant:
+		expect(truncated.trim().endsWith("User: message 3\n\nAssistant: message 4")).toBe(true);
+	});
+
+	it("does not false-match 'User:' or 'Assistant:' inside message content", () => {
+		const convo =
+			"User: How do I define a user class?\n\nAssistant: class User:\n    pass\n\nUser: message 3";
+		const truncated = truncateConversationFromEnd(convo, 35);
+		expect(truncated).toContain("[Conversation truncated for length...]");
+		expect(truncated.endsWith("User: message 3")).toBe(true);
+	});
+
+	it("falls back to raw slice if turn boundaries are missing", () => {
+		const convo = "some raw text without headers that is very long and stuff";
+		const truncated = truncateConversationFromEnd(convo, 10);
+		expect(truncated).toContain("[Conversation truncated for length...]");
+		expect(truncated.endsWith("and stuff")).toBe(true);
 	});
 });
