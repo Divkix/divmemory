@@ -1,4 +1,4 @@
-# divmemory — Spec v0.2
+# divmemory — Spec v0.3
 
 > Persistent cross-session memory layer for coding agents.
 > Phase 1: Factory Droid plugin. Phase 2: OpenCode. Phase 3: Claude Code.
@@ -302,28 +302,32 @@ CREATE TABLE projects (
 
 -- Sessions log (raw_text kept until consolidated)
 CREATE TABLE sessions (
-  id            TEXT PRIMARY KEY,
-  project_id    TEXT NOT NULL REFERENCES projects(id),
-  source        TEXT NOT NULL,    -- 'droid' | 'opencode' | 'claude-code'
-  raw_text      TEXT,
-  token_count   INTEGER,
-  consolidated  INTEGER DEFAULT 0,
-  created_at    INTEGER DEFAULT (unixepoch())
+  id              TEXT PRIMARY KEY,
+  project_id      TEXT NOT NULL REFERENCES projects(id),
+  source          TEXT NOT NULL,    -- 'droid' | 'opencode' | 'claude-code'
+  raw_text        TEXT,
+  token_count     INTEGER,
+  consolidated    INTEGER DEFAULT 0,  -- 0=unconsolidated, 1=consolidated, -1=extraction error
+  extraction_error TEXT,              -- raw Firepass response on parse failure, NULL if ok
+  created_at      INTEGER DEFAULT (unixepoch())
 );
 
 -- Memory entries
 CREATE TABLE memories (
-  id            TEXT PRIMARY KEY,
-  project_id    TEXT NOT NULL REFERENCES projects(id),
-  topic         TEXT NOT NULL,    -- 'project_context' | 'decisions' | 'issues' | 'preferences' | 'general'
-  content       TEXT NOT NULL,
-  source_session TEXT,
-  confidence    REAL DEFAULT 1.0,
-  created_at    INTEGER DEFAULT (unixepoch()),
-  updated_at    INTEGER DEFAULT (unixepoch())
+  id              TEXT PRIMARY KEY,
+  project_id      TEXT NOT NULL REFERENCES projects(id),
+  topic           TEXT NOT NULL,    -- 'project_context' | 'decisions' | 'issues' | 'preferences' | 'general'
+  content         TEXT NOT NULL,
+  source_session  TEXT,
+  confidence      REAL DEFAULT 1.0,
+  curated         INTEGER DEFAULT 0,  -- 0=auto-extracted, 1=user hand-edited or manually added
+  status          TEXT DEFAULT 'active',  -- 'active' | 'archived' (archived = soft-delete, recoverable)
+  created_at      INTEGER DEFAULT (unixepoch()),
+  updated_at      INTEGER DEFAULT (unixepoch())
 );
 
 CREATE INDEX idx_memories_project_topic ON memories(project_id, topic);
+CREATE INDEX idx_memories_project_status ON memories(project_id, status);
 CREATE INDEX idx_sessions_project ON sessions(project_id, consolidated);
 ```
 
@@ -361,16 +365,23 @@ Flow:
 1. Upsert project into `projects` table
 2. Insert session into `sessions` table (raw_text = conversation)
 3. Call `extractFacts(conversation, projectId)` → Firepass (async via `ctx.waitUntil`)
-   - On Firepass failure: session is stored, no facts extracted, ingest still returns 200
-   - Extraction failures retried on next consolidation trigger
-4. Deduplicate returned facts against existing `memories` using token-overlap similarity
+4. **JSON recovery** (if `JSON.parse` of Firepass response fails):
+   a. Strip markdown fences (` ```json ... ``` `) and retry parse
+   b. Try to extract valid JSON objects from the response (find `{` to `}` pairs)
+   c. If still unparseable: log raw response to `sessions.extraction_error`, set
+      `sessions.consolidated = -1` (error flag), insert zero facts, return 200
+   - Extraction errors are retried on next consolidation trigger
+   - Firepass HTTP failures (non-200, timeout): same as parse failure — log, flag, retry later
+5. Deduplicate returned facts against existing `memories` using token-overlap similarity
    - If similarity > 60% with an existing fact: update `updated_at` timestamp
    - Replace `content` only if new fact has higher `confidence`
-   - If no match: insert as new memory
-5. Increment `projects.session_count`
-6. **Auto-consolidation trigger**: if unconsolidated session count ≥ 5 for this project,
+   - **Exception**: if existing fact has `curated = 1`, skip dedup merge entirely
+     (curated facts are only updated by the user, never by auto-extraction)
+   - If no match: insert as new memory (with `curated = 0`, `status = 'active'`)
+6. Increment `projects.session_count`
+7. **Auto-consolidation trigger**: if unconsolidated session count ≥ 5 for this project,
    fire `consolidate(projectId)` async via `ctx.waitUntil`
-7. Return `{ ok: true, facts_written: N }` (N may be 0 on extraction failure)
+8. Return `{ ok: true, facts_written: N }` (N may be 0 on extraction failure)
 
 #### `GET /context`
 
@@ -380,7 +391,7 @@ Auth: `Authorization: Bearer <DIVMEMORY_API_KEY>`
 
 Flow:
 
-1. Fetch all memories for project, ordered by `topic, updated_at DESC`
+1. Fetch all **active** memories (`status = 'active'`) for project, ordered by `topic, updated_at DESC`
 2. **Truncation strategy** (ensures balanced coverage):
    - Allocate ~500 chars guaranteed to each of the 5 topics (2500 chars total)
    - Fill remaining ~9500 chars with newest memories across all topics
@@ -401,6 +412,23 @@ session content), updates memories, marks sessions as consolidated, prunes
 - **Per-ingest**: When unconsolidated sessions ≥ 5 for a project
 - **Cron**: Daily 3am UTC — consolidates any project with ≥ 2 unconsolidated sessions
 
+**Curated fact protection**: Consolidation skips all memories where `curated = 1`.
+The LLM can merge, update, or prune only auto-extracted facts (`curated = 0`).
+Curated facts are never rephrased, overwritten, or deleted by consolidation.
+
+**Auto-archiving**: During consolidation, any curated fact (`curated = 1`) that
+has NOT been corroborated by at least one session in the last 90 days is
+auto-archived (`status = 'archived'`). Archived facts are soft-deleted:
+excluded from context injection, hidden by default in the web UI, but
+recoverable via a "Show Archived" toggle. Corroboration is detected by running
+each curated fact through dedup against newly extracted facts — if a new
+auto-extracted fact has >60% Jaccard similarity with a curated fact, the
+curated fact's `updated_at` is refreshed (preventing archival).
+
+**Archived fact recovery**: The web UI shows archived facts with a "Restore"
+button that sets `status` back to `'active'`. Archived facts are never
+hard-deleted.
+
 **Failure handling**: On Firepass failure during consolidation, sessions stay
 unconsolidated. They retry on the next trigger. Raw text remains in D1 until
 successful consolidation.
@@ -409,7 +437,12 @@ successful consolidation.
 
 Auth: Cookie-based (web UI) or `Authorization: Bearer <DIVMEMORY_API_KEY>` (API)
 
-Returns JSON of all memories, grouped by project and topic.
+Query params:
+- `?project=<project_id>` — filter by project
+- `?search=<text>` — substring match against content (used by `/memory forget`)
+- `?status=archived` — include archived facts (default: active only)
+
+Returns JSON of all matching memories, grouped by project and topic.
 
 #### `PATCH /memories/:id`
 
@@ -417,11 +450,18 @@ Auth: Cookie-based or bearer token
 
 Body: `{ "content": "updated fact text", "topic": "decisions" }`
 
+When a user edits a fact via the web UI, the fact is automatically set to
+`curated = 1` to protect it from future consolidation rewrites.
+
+Also accepts: `{ "status": "active" }` to restore an archived fact back to active.
+
 #### `DELETE /memories/:id`
 
 Auth: Cookie-based or bearer token
 
-Hard delete a single memory entry.
+Soft-archives curated facts (`curated = 1`) by setting `status = 'archived'`.
+Hard-deletes auto-extracted facts (`curated = 0`) permanently.
+Archived facts can be restored via the web UI.
 
 #### `POST /login`
 
@@ -439,10 +479,12 @@ Shows:
 - **Login form** (if not authenticated via cookie)
 - **Project list** (sidebar)
 - **Memory entries** grouped by topic (main panel)
-- **Edit button** → inline form, POSTs to PATCH endpoint
-- **Delete button** → form POST to DELETE endpoint
+- **Edit button** → inline form, POSTs to PATCH endpoint (sets `curited = 1`)
+- **Delete button** → form POST to DELETE endpoint (hard delete for auto-extracted, soft-archives curated facts)
 - **Consolidate button** → POST /consolidate (only shown when 2+ unconsolidated sessions)
-- **Session log** (last 20 sessions, token count, date)
+- **"N sessions pending extraction" counter** (when `consolidated = -1` sessions exist)
+- **"Show Archived" toggle** → reveals `status = 'archived'` facts with a "Restore" button per fact
+- **Session log** (last 20 sessions, extraction status, token count, date)
 
 All interactions are standard form POSTs — no fetch/JS needed.
 
@@ -510,14 +552,16 @@ Model string is configured via `FIREWORKS_MODEL` env var, defaulting to
 
 ### 7.3 Deduplication Logic
 
-Before inserting a new fact, check against existing memories for the same
-project + topic:
+Before inserting a new fact, check against existing **active** memories for the
+same project + topic:
 
 1. Tokenize both the new fact and each existing fact (lowercase, split on whitespace)
 2. Compute Jaccard similarity: `|intersection| / |union|`
 3. If similarity > 0.6: this is a duplicate
    - Always update `updated_at` to now (keeps fact fresh)
    - Replace `content` only if `new.confidence > old.confidence`
+   - **Exception**: if existing fact has `curated = 1`, skip entirely — curated
+     facts are never modified by auto-extraction
 4. If similarity ≤ 0.6: insert as new memory
 
 ### 7.4 Consolidation Pass
@@ -578,6 +622,17 @@ Interact with your divmemory second brain.
 
 The slash command calls the same CF Worker API. The agent runs the appropriate
 HTTP call and prints the result.
+
+**`/memory add` behavior**: Manually added facts run through the same dedup
+pipeline as auto-extracted facts. They are inserted with `curated = 1` and
+`confidence = 1.0`. If a similar fact already exists (Jaccard > 60%), the
+existing fact's `updated_at` is refreshed but content is NOT replaced —
+manual additions don't overwrite existing facts silently.
+
+**`/memory forget` behavior**: Searches memories via `GET /memories?search=<text>`.
+Returns matching facts with IDs. The agent then calls `DELETE /memories/:id`
+for the user-confirmed match. Curated facts are soft-archived instead of
+hard-deleted (set `status = 'archived'`). Auto-extracted facts are hard-deleted.
 
 ---
 
@@ -698,16 +753,22 @@ implementation.
 | 1 | Repo structure | Monorepo: `worker/`, `plugin/`, `cli/` |
 | 2 | Project ID | Git remote origin, dirname fallback |
 | 3 | Memory injection method | SessionStart hook stdout → direct context injection. NO AGENTS.md editing |
-| 4 | Token / char budget | 12K chars cap, min 500 chars per topic guarantee |
-| 5 | Merge strategy | Token-overlap similarity (>60%), update if confidence higher, always refresh `updated_at` |
-| 6 | Firepass model | `accounts/fireworks/routers/kimi-k2p6-turbo` (env-configurable) |
+| 4 | Token / char budget | 12K chars cap, min 500 chars per topic guarantee. Tunable via `max_chars` param |
+| 5 | Merge strategy | Token-overlap Jaccard similarity (>60%), update if confidence higher, always refresh `updated_at` |
+| 6 | Firepass model | `accounts/fireworks/routers/kimi-k2p6-turbo` (env-configurable). Flat-rate via Firepass ($49/mo) |
 | 7 | Conversation extraction | Keep text blocks, strip thinking/tool_use/system-reminder |
 | 8 | API auth | Single `DIVMEMORY_API_KEY` bearer token |
 | 9 | Web UI auth | Separate `DIVMEMORY_WEB_PASSWORD` + cookie |
 | 10 | Plugin distribution | GitHub repo as marketplace |
 | 11 | Worker framework | Hono + Drizzle |
-| 12 | Web UI tech | Hono JSX (server-rendered, zero client JS) |
+| 12 | Web UI tech | Hono JSX (server-rendered, zero client JS for v1) |
 | 13 | Bootstrap CLI | Node-compiled, `npx divmemory-bootstrap` |
 | 14 | Consolidation triggers | Auto at 5+ sessions (per ingest), cron at 2+ (daily 3am) |
 | 15 | Firepass failures | Best-effort extraction, raw text always saved, retry on next consolidation |
 | 16 | Testing | Vitest, TDD, comprehensive across all packages |
+| 17 | Curated facts | `curated` boolean on memories. Consolidation skips curated facts — only user can edit |
+| 18 | Staleness auto-cleanup | Curated facts not corroborated in 90+ days auto-archived (soft-delete, recoverable) |
+| 19 | JSON parse recovery | Malformed Firepass JSON: strip markdown fences, partial extraction, log error, flag session |
+| 20 | Manual fact additions | Run through dedup, inserted with `curited=1`, `confidence=1.0`, don't overwrite existing |
+| 21 | Fact archival | `status = 'archived'` column. Soft-delete, recoverable from web UI. Excluded from context |
+| 22 | Session error flagging | `consolidated = -1` + `extraction_error` column. Surface count in web UI |
