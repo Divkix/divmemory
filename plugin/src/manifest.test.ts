@@ -5,6 +5,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 describe("plugin manifest", () => {
 	const pluginDir = fileURLToPath(new URL("..", import.meta.url));
+	const commandsPath = join(pluginDir, "commands", "memory.md");
+	let commandsContent: string;
+
+	beforeAll(() => {
+		if (existsSync(commandsPath)) {
+			commandsContent = readFileSync(commandsPath, "utf-8");
+		}
+	});
 
 	describe("plugin.json", () => {
 		it("exists at the plugin package root", () => {
@@ -112,6 +120,44 @@ describe("plugin manifest", () => {
 			if (!existsSync(cliPath)) return;
 			const cliSource = readFileSync(cliPath, "utf-8");
 			expect(cliSource).toContain("DIVMEMORY_WORKER_URL");
+		});
+	});
+
+	describe("VAL-PLUGIN-112: /memory command file at plugin/commands/memory.md", () => {
+		it("memory.md exists at plugin/commands/memory.md", () => {
+			expect(existsSync(commandsPath)).toBe(true);
+		});
+
+		it("memory.md is valid markdown with a heading", () => {
+			expect(commandsContent).toContain("#");
+		});
+
+		it("documents show subcommand", () => {
+			expect(commandsContent).toContain("show");
+		});
+
+		it("documents forget subcommand", () => {
+			expect(commandsContent).toContain("forget");
+		});
+
+		it("documents add subcommand", () => {
+			expect(commandsContent).toContain("add");
+		});
+
+		it("documents consolidate subcommand", () => {
+			expect(commandsContent).toContain("consolidate");
+		});
+
+		it("documents status subcommand", () => {
+			expect(commandsContent).toContain("status");
+		});
+
+		it("mentions DIVMEMORY_API_KEY", () => {
+			expect(commandsContent).toContain("DIVMEMORY_API_KEY");
+		});
+
+		it("mentions DIVMEMORY_WORKER_URL", () => {
+			expect(commandsContent).toContain("DIVMEMORY_WORKER_URL");
 		});
 	});
 });
