@@ -1,11 +1,11 @@
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bearerAuth, cookieAuth, hybridAuth } from "./auth";
-import { csrfValidate } from "./csrf";
 import { createLoginRoute } from "./login";
 import * as consolidate from "./routes/consolidate";
 import { createContextRoute } from "./routes/context";
 import * as ingest from "./routes/ingest";
+import { createMemoriesRoute } from "./routes/memories";
 
 /* ────────── Wire auto-consolidation trigger ────────── */
 ingest.setConsolidationTrigger(
@@ -86,10 +86,8 @@ consolidate.createConsolidateRoute(app, undefined, {
 	}),
 });
 
-/* ────────── Stub protected routes — implemented by other features ────────── */
-app.get("/memories", (c) => c.json({ memories: [] }));
-app.patch("/memories/:id", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));
-app.delete("/memories/:id", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));
+/* ────────── Memory CRUD routes ────────── */
+createMemoriesRoute(app);
 
 /* ────────── Web UI index (cookie-protected) ────────── */
 app.get("/", cookieAuth("divmemory_session"), (c) => c.text("divmemory web ui"));
