@@ -70,6 +70,31 @@ function authHeaders() {
 	return { Authorization: `Bearer ${TEST_API_KEY}`, "Content-Type": "application/json" };
 }
 
+function createIngestAppWithMock(
+	db: ReturnType<typeof drizzle>,
+	opts?: { getEnv?: (c: unknown) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
+) {
+	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();
+	app.use("/ingest", bearerAuth("divmemory_session"));
+	createIngestRoute(app, db, {
+		getEnv: opts?.getEnv ?? (() => ({ FIREWORKS_API_KEY: TEST_API_KEY })),
+	});
+	return app;
+}
+
+function mockExecCtx() {
+	const promises: Promise<unknown>[] = [];
+	return {
+		ctx: {
+			waitUntil: (p: Promise<unknown>) => {
+				promises.push(p);
+			},
+			passThroughOnException: () => {},
+		} as unknown as import("@cloudflare/workers-types").ExecutionContext,
+		awaitAll: () => Promise.all(promises),
+	};
+}
+
 describe("ingest endpoint", () => {
 	let testDb: ReturnType<typeof createTestDb>;
 	let app: ReturnType<typeof createIngestApp>;
@@ -350,6 +375,71 @@ describe("ingest endpoint", () => {
 				const j2 = (await res2.json()) as { facts_written: number };
 				expect(j2.facts_written).toBe(0);
 			}
+		});
+	});
+
+	describe("async extraction via ctx.waitUntil", () => {
+		it("returns 200 immediately and extracts asynchronously", async () => {
+			const app2 = createIngestAppWithMock(testDb.db, {
+				getEnv: () => ({
+					FIREWORKS_API_KEY: "test-key",
+					FIREWORKS_MODEL: "test-model",
+				}),
+			});
+			const { ctx, awaitAll } = mockExecCtx();
+
+			const body = {
+				session_id: "sess-async",
+				project_id: "proj/async",
+				conversation: "User: hello\n\nAssistant: hi",
+			};
+			const req = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body),
+			});
+			const res = await app2.fetch(req, envVars() as unknown as Record<string, string>, ctx);
+			expect(res.status).toBe(200);
+			const json = (await res.json()) as { ok: boolean; facts_written: number };
+			expect(json.ok).toBe(true);
+			expect(json.facts_written).toBe(0); // async, not yet extracted
+
+			// Wait for async extraction to finish
+			await awaitAll();
+		});
+	});
+
+	describe("extraction_error contains raw Firepass response on simulated failure", () => {
+		it("stores raw Firepass response text on HTTP failure", async () => {
+			const app2 = createIngestAppWithMock(testDb.db, {
+				getEnv: () => ({
+					FIREWORKS_API_KEY: "bad-key",
+					FIREWORKS_MODEL: "test-model",
+				}),
+			});
+			const { ctx, awaitAll } = mockExecCtx();
+
+			const body = {
+				session_id: "sess-error",
+				project_id: "proj/error",
+				conversation: "User: hello",
+			};
+			const req = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body),
+			});
+			await app2.fetch(req, envVars() as unknown as Record<string, string>, ctx);
+			await awaitAll();
+
+			const sess = testDb.db.select().from(sessions).where(eq(sessions.id, "sess-error")).get();
+			expect(sess).toBeDefined();
+			expect(sess?.consolidated).toBe(-1);
+			// Should contain an HTTP error prefix; the raw response body may be empty or contain
+			// a JSON error from Fireworks, but it should NOT be the old generic string.
+			expect(sess?.extractionError).not.toBe("Firepass extraction failed");
+			expect(sess?.extractionError).not.toBeNull();
+			expect(sess?.extractionError?.length).toBeGreaterThan(5);
 		});
 	});
 

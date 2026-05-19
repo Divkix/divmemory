@@ -26,6 +26,12 @@ interface Extracted {
 	facts: Fact[];
 }
 
+export interface ExtractionResult {
+	extracted: Extracted | null;
+	rawResponse: string | null;
+	error?: string;
+}
+
 /* ───────── helpers: JSON recovery ───────── */
 
 export function recoverJSON(raw: string): Extracted | null {
@@ -124,8 +130,10 @@ export async function extractFacts(
 	rawText: string,
 	apiKey: string,
 	model = DEFAULT_FIREWORKS_MODEL,
-): Promise<Extracted | null> {
-	if (!apiKey) return { facts: [] };
+): Promise<ExtractionResult> {
+	if (!apiKey) {
+		return { extracted: { facts: [] }, rawResponse: null };
+	}
 	const prompt = EXTRACTION_PROMPT.replace("{CONVERSATION}", rawText.slice(0, 100_000)); // truncate if huge
 	try {
 		const controller = new AbortController();
@@ -146,13 +154,23 @@ export async function extractFacts(
 		});
 		clearTimeout(timer);
 		if (!res.ok) {
-			return null; // signal HTTP failure
+			const bodyText = await res.text();
+			return {
+				extracted: null,
+				rawResponse: bodyText,
+				error: `HTTP ${res.status}: ${res.statusText}`,
+			};
 		}
 		const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
 		const raw = data.choices?.[0]?.message?.content ?? "";
-		return recoverJSON(raw);
-	} catch {
-		return null; // timeout / network failure
+		const extracted = recoverJSON(raw);
+		return { extracted, rawResponse: raw };
+	} catch (err) {
+		return {
+			extracted: null,
+			rawResponse: null,
+			error: err instanceof Error ? err.message : String(err),
+		};
 	}
 }
 
@@ -233,6 +251,31 @@ async function dedupFacts(
 	return { factsToInsert, updates };
 }
 
+/* ───────── atomic DB writes helper ───────── */
+
+async function runAtomic<T>(db: DbLike, fn: (dbOrTx: DbLike) => Promise<T>): Promise<T> {
+	// Detect D1 by presence of .batch() method
+	if ("batch" in db && typeof (db as unknown as { batch: unknown }).batch === "function") {
+		try {
+			db.run(sql`BEGIN TRANSACTION`);
+			const result = await fn(db);
+			db.run(sql`COMMIT`);
+			return result;
+		} catch (e) {
+			try {
+				db.run(sql`ROLLBACK`);
+			} catch {
+				/* best effort rollback */
+			}
+			throw e;
+		}
+	}
+	// For SQLite adapters (bun-sqlite), use native drizzle transaction
+	return (
+		db as unknown as { transaction: <U>(fn: (tx: DbLike) => Promise<U>) => Promise<U> }
+	).transaction(fn);
+}
+
 /* ───────── helpers: auto-consolidation trigger ───────── */
 
 export function setConsolidationTrigger(
@@ -260,6 +303,76 @@ function unconsolidatedCount(projectId: string, db: DbLike): number {
 
 function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
 	consolidationTrigger(projectId, db, c);
+}
+
+/* ───────── async extraction result processor ───────── */
+
+async function processExtractionResult(
+	db: DbLike,
+	projectId: string,
+	sessionId: string,
+	result: ExtractionResult,
+	now: string,
+): Promise<number> {
+	let factsWritten = 0;
+
+	if (result.error || !result.extracted) {
+		const rawResponse = result.rawResponse ?? result.error ?? "Firepass extraction failed";
+		await runAtomic(db, async (tx) => {
+			tx.update(sessions)
+				.set({ consolidated: -1, extractionError: rawResponse })
+				.where(eq(sessions.id, sessionId))
+				.run();
+		});
+		return 0;
+	}
+
+	const filtered = filterFacts(result.extracted.facts);
+	if (filtered.length > 0) {
+		const { factsToInsert, updates } = await dedupFacts(filtered, projectId, db);
+		factsWritten = factsToInsert.length + updates.length;
+
+		await runAtomic(db, async (tx) => {
+			// insert new memories
+			for (const f of factsToInsert) {
+				tx.insert(memories)
+					.values({
+						id: crypto.randomUUID(),
+						projectId,
+						sourceSession: sessionId,
+						topic: f.topic,
+						content: f.content,
+						confidence: f.confidence,
+						curated: 0,
+						status: "active",
+						createdAt: now,
+						updatedAt: now,
+					})
+					.run();
+			}
+
+			// update dedupped memories
+			for (const u of updates) {
+				tx.update(memories)
+					.set({
+						updatedAt: now,
+						...(u.content !== undefined ? { content: u.content } : {}),
+						confidence: u.confidence,
+					})
+					.where(eq(memories.id, u.id))
+					.run();
+			}
+		});
+	}
+
+	await runAtomic(db, async (tx) => {
+		tx.update(sessions)
+			.set({ consolidated: 0, extractionError: null })
+			.where(eq(sessions.id, sessionId))
+			.run();
+	});
+
+	return factsWritten;
 }
 
 /* ───────── route ───────── */
@@ -299,7 +412,7 @@ export function createIngestRoute(
 
 		const now = new Date().toISOString();
 
-		// ── check duplicate session ──
+		// ── check duplicate session (read-only, outside transaction) ──
 		const existingSession = dbCtx
 			.select()
 			.from(sessions)
@@ -309,121 +422,95 @@ export function createIngestRoute(
 			return c.json({ ok: true, facts_written: 0 }, 200);
 		}
 
-		// ── upsert project ──
-		const existingProject = dbCtx
-			.select({ id: projects.id })
-			.from(projects)
-			.where(eq(projects.id, body.project_id))
-			.get();
-		if (existingProject) {
-			dbCtx
-				.update(projects)
-				.set({
-					lastSeen: now,
-					sessionCount: sql`${projects.sessionCount} + 1`,
-				})
+		// ── atomic pre-extraction writes: upsert project + insert session ──
+		await runAtomic(dbCtx, async (tx) => {
+			const existingProject = tx
+				.select({ id: projects.id })
+				.from(projects)
 				.where(eq(projects.id, body.project_id))
-				.run();
-		} else {
-			dbCtx
-				.insert(projects)
+				.get();
+
+			if (existingProject) {
+				tx.update(projects)
+					.set({
+						lastSeen: now,
+						sessionCount: sql`${projects.sessionCount} + 1`,
+					})
+					.where(eq(projects.id, body.project_id))
+					.run();
+			} else {
+				tx.insert(projects)
+					.values({
+						id: body.project_id,
+						name: body.project_name || body.project_id.split("/").pop() || body.project_id,
+						sessionCount: 1,
+						createdAt: now,
+						lastSeen: now,
+					})
+					.run();
+			}
+
+			tx.insert(sessions)
 				.values({
-					id: body.project_id,
-					name: body.project_name || body.project_id.split("/").pop() || body.project_id,
-					sessionCount: 1,
+					id: body.session_id,
+					projectId: body.project_id,
+					source: body.source || "droid",
+					rawText: body.conversation,
+					consolidated: 0,
+					extractionError: null,
+					tokenCount: body.conversation.length,
+					metadata: body.metadata ? JSON.stringify(body.metadata) : null,
 					createdAt: now,
-					lastSeen: now,
 				})
 				.run();
-		}
+		});
 
-		// ── insert session ──
-		dbCtx
-			.insert(sessions)
-			.values({
-				id: body.session_id,
-				projectId: body.project_id,
-				source: body.source || "droid",
-				rawText: body.conversation,
-				consolidated: 0,
-				extractionError: null,
-				tokenCount: body.conversation.length,
-				metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-				createdAt: now,
-			})
-			.run();
-
-		// ── extract facts via Firepass ──
+		// ── async extraction via ctx.waitUntil ──
 		const env = opts?.getEnv ? opts.getEnv(c) : {};
 		const fwKey = env.FIREWORKS_API_KEY ?? "";
 		const fwModel = env.FIREWORKS_MODEL ?? DEFAULT_FIREWORKS_MODEL;
-		let factsWritten = 0;
-		let consolidated = 0;
-		let extractionError: string | null = null;
 
-		try {
-			const extracted = await extractFacts(body.conversation, fwKey, fwModel);
-			if (!extracted) {
-				// Complete parse failure or HTTP error
-				consolidated = -1;
-				extractionError = "Firepass extraction failed";
-			} else {
-				const filtered = filterFacts(extracted.facts);
-				if (filtered.length > 0) {
-					const { factsToInsert, updates } = await dedupFacts(filtered, body.project_id, dbCtx);
-					factsWritten = factsToInsert.length + updates.length;
+		const doExtraction = async () => {
+			try {
+				const result = await extractFacts(body.conversation, fwKey, fwModel);
+				const factsWritten = await processExtractionResult(
+					dbCtx,
+					body.project_id,
+					body.session_id,
+					result,
+					now,
+				);
 
-					// insert new memories
-					for (const f of factsToInsert) {
-						dbCtx
-							.insert(memories)
-							.values({
-								id: crypto.randomUUID(),
-								projectId: body.project_id,
-								sourceSession: body.session_id,
-								topic: f.topic,
-								content: f.content,
-								confidence: f.confidence,
-								curated: 0,
-								status: "active",
-								createdAt: now,
-								updatedAt: now,
-							})
-							.run();
-					}
-
-					// update dedupped memories
-					for (const u of updates) {
-						dbCtx
-							.update(memories)
-							.set({
-								updatedAt: now,
-								...(u.content !== undefined ? { content: u.content } : {}),
-								confidence: u.confidence,
-							})
-							.where(eq(memories.id, u.id))
-							.run();
-					}
+				// ── auto-consolidation trigger ──
+				const unconsol = unconsolidatedCount(body.project_id, dbCtx);
+				if (unconsol >= 5) {
+					triggerConsolidation(body.project_id, dbCtx, c);
 				}
+				return factsWritten;
+			} catch (e) {
+				const errMsg = e instanceof Error ? e.message : String(e);
+				await runAtomic(dbCtx, async (tx) => {
+					tx.update(sessions)
+						.set({ consolidated: -1, extractionError: errMsg })
+						.where(eq(sessions.id, body.session_id))
+						.run();
+				});
+				return 0;
 			}
-		} catch (e) {
-			consolidated = -1;
-			extractionError = e instanceof Error ? e.message : String(e);
+		};
+
+		// Production: ctx.executionCtx.waitUntil (non-blocking). Tests: await directly.
+		try {
+			const wc = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void };
+			if (typeof wc.waitUntil === "function") {
+				wc.waitUntil(doExtraction());
+			} else {
+				await doExtraction();
+			}
+		} catch {
+			await doExtraction();
 		}
 
-		// ── update session with extraction result ──
-		dbCtx
-			.update(sessions)
-			.set({ consolidated, extractionError })
-			.where(eq(sessions.id, body.session_id))
-			.run();
-
-		// ── auto-consolidation trigger ──
-		const unconsol = unconsolidatedCount(body.project_id, dbCtx);
-		if (unconsol >= 5) {
-			triggerConsolidation(body.project_id, dbCtx, c);
-		}
-
-		return c.json({ ok: true, facts_written: factsWritten }, 200);
+		return c.json({ ok: true, facts_written: 0 }, 200);
 	});
 }
