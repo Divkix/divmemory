@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { bearerAuth, cookieAuth, hybridAuth } from "./auth";
 import { csrfValidate } from "./csrf";
 import { createLoginRoute } from "./login";
+import { createContextRoute } from "./routes/context";
 import { createIngestRoute } from "./routes/ingest";
 
 const app = new Hono();
@@ -62,8 +63,10 @@ createIngestRoute(app, undefined, {
 	}),
 });
 
+/* ────────── Context route ────────── */
+createContextRoute(app);
+
 /* ────────── Stub protected routes — implemented by other features ────────── */
-app.get("/context", (c) => c.text("# context\n"));
 app.post("/consolidate", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));
 app.get("/memories", (c) => c.json({ memories: [] }));
 app.patch("/memories/:id", csrfValidate("csrf_token"), (c) => c.json({ ok: true }));
