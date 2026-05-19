@@ -115,3 +115,129 @@ describe("plugin manifest", () => {
 		});
 	});
 });
+
+describe("agent skill", () => {
+	const pluginDir = fileURLToPath(new URL("..", import.meta.url));
+	const skillPath = join(pluginDir, "skills", "memory", "SKILL.md");
+	let skillContent: string;
+
+	beforeAll(() => {
+		skillContent = readFileSync(skillPath, "utf-8");
+	});
+
+	describe("VAL-PLUGIN-091: Skill is loaded from plugin/skills/memory/SKILL.md", () => {
+		it("SKILL.md exists at the correct path", () => {
+			expect(existsSync(skillPath)).toBe(true);
+		});
+
+		it("SKILL.md is valid markdown", () => {
+			expect(skillContent).toContain("#");
+			expect(skillContent.length).toBeGreaterThan(50);
+		});
+	});
+
+	describe("VAL-PLUGIN-092: Skill contains correct topic descriptions for all 5 topics", () => {
+		it("lists all 5 topics", () => {
+			const topics = ["project_context", "decisions", "issues", "preferences", "general"];
+			for (const topic of topics) {
+				expect(skillContent).toContain(topic);
+			}
+		});
+
+		it("each topic has a description", () => {
+			const topicLines = skillContent
+				.split("\n")
+				.filter((line) => line.startsWith("- ") && line.includes(":"));
+			expect(topicLines.length).toBeGreaterThanOrEqual(5);
+		});
+	});
+
+	describe("VAL-PLUGIN-113: SKILL.md content mentions /memory add and /memory show commands", () => {
+		it("mentions /memory add", () => {
+			expect(skillContent).toContain("/memory add");
+		});
+
+		it("mentions /memory show", () => {
+			expect(skillContent).toContain("/memory show");
+		});
+	});
+
+	describe("VAL-PLUGIN-114: SKILL.md exact content completeness — header, injection awareness, topic descriptions", () => {
+		it("contains the header about persistent memory system", () => {
+			expect(skillContent).toContain("persistent memory system");
+		});
+
+		it("contains the injection-awareness line about session start", () => {
+			expect(skillContent).toContain("At the start of this session, your memory");
+			expect(skillContent).toContain("injected into the context");
+		});
+
+		it("mentions the context block header format", () => {
+			expect(skillContent).toContain("## divmemory — Project Memory");
+		});
+	});
+
+	describe("VAL-PLUGIN-088: Agent recognizes injected context block format", () => {
+		it("describes how memory appears in context", () => {
+			expect(skillContent).toContain("It appears under");
+			expect(skillContent).toContain("## divmemory — Project Memory");
+		});
+	});
+
+	describe("VAL-PLUGIN-087: Skill loaded by Droid and agent understands memory topics", () => {
+		it("defines topic project_context", () => {
+			expect(skillContent).toContain("project_context");
+			expect(skillContent).toMatch(/project_context.*stack.*architecture/);
+		});
+
+		it("defines topic decisions", () => {
+			expect(skillContent).toContain("decisions");
+			expect(skillContent).toMatch(/decisions.*choice/);
+		});
+
+		it("defines topic issues", () => {
+			expect(skillContent).toContain("issues");
+			expect(skillContent).toMatch(/issue.*bug.*gotch/);
+		});
+
+		it("defines topic preferences", () => {
+			expect(skillContent).toContain("preferences");
+			expect(skillContent).toMatch(/preference.*like.*thing/);
+		});
+
+		it("defines topic general", () => {
+			expect(skillContent).toContain("general");
+			expect(skillContent).toMatch(/general.*cross-project/);
+		});
+	});
+
+	describe("VAL-PLUGIN-089: Agent can explain /memory command to the user", () => {
+		it("includes instruction to view memory with /memory show", () => {
+			expect(skillContent).toContain("/memory show");
+		});
+
+		it("includes instruction to save memory with /memory add", () => {
+			expect(skillContent).toContain("/memory add");
+		});
+	});
+
+	describe("VAL-PLUGIN-090: Agent proactively suggests /memory add when user shares important info", () => {
+		it("provides the /memory add command for manual saves", () => {
+			expect(skillContent).toContain("/memory add");
+		});
+
+		it("references manual fact saving with a topic argument", () => {
+			expect(skillContent).toMatch(/\/memory add.*"<fact>".*<topic>/);
+		});
+	});
+
+	describe("VAL-PLUGIN-093: Skill works with session context injection", () => {
+		it("explains that memory is injected at session start", () => {
+			expect(skillContent).toContain("At the start of this session, your memory");
+		});
+
+		it("references the context block format used by injection", () => {
+			expect(skillContent).toContain("## divmemory — Project Memory");
+		});
+	});
+});
