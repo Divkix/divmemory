@@ -48,7 +48,8 @@
 			"!**/dist",
 			"!**/build",
 			"!**/.wrangler",
-			"!**/*.generated.*"
+			"!**/*.generated.*",
+			"!**/drizzle"
 		],
 		"ignoreUnknown": true
 	}

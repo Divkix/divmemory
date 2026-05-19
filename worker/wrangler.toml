@@ -8,5 +8,5 @@ command = "bun run build"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "divmemory"
-database_id = ""
+database_name = "divmemory-db"
+database_id = "601afc4d-c4f3-4392-aa67-c413671d61e2"
