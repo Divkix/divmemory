@@ -4,6 +4,6 @@
 	"version": "0.1.0",
 	"author": "divkix",
 	"entry": "src/index.ts",
-	"hooks": {},
-	"commands": {}
+	"hooks": "hooks.json",
+	"commands": "commands/memory.md"
 }

@@ -1,0 +1,14 @@
+{
+	"hooks": [
+		{
+			"event": "SessionEnd",
+			"command": "node ${DROID_PLUGIN_ROOT}/scripts/session-end.mjs",
+			"timeout": 90
+		},
+		{
+			"event": "SessionStart",
+			"command": "node ${DROID_PLUGIN_ROOT}/scripts/session-start.mjs",
+			"timeout": 30
+		}
+	]
+}
