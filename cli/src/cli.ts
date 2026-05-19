@@ -98,7 +98,12 @@ export async function findSessionFiles(dir: string, limit = DEFAULT_LIMIT): Prom
 			const fullPath = join(currentDir, entry.name);
 			if (entry.isDirectory()) {
 				scan(fullPath);
-			} else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+			} else if (entry.isSymbolicLink()) {
+				const s = statSync(fullPath);
+				if (s.isDirectory()) {
+					scan(fullPath);
+				}
+			} else if (entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.startsWith(".")) {
 				const s = statSync(fullPath);
 				// Determine project directory:
 				// Under ~/.factory/sessions/ the first subdir is the encoded project path.

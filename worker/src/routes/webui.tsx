@@ -202,6 +202,16 @@ const Layout: FC<PropsWithChildren<{ title: string }>> = ({ title, children }) =
 				<meta charset="UTF-8" />
 				<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 				<title>{title}</title>
+				<link
+					rel="icon"
+					href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🧠%3C/text%3E%3C/svg%3E"
+				/>
+				<meta property="og:title" content="divmemory - Persistent session memory" />
+				<meta
+					property="og:description"
+					content="Persistent cross-session memory for coding agent"
+				/>
+				<meta property="og:type" content="website" />
 				{/* biome-ignore lint/security/noDangerouslySetInnerHtml: Global CSS is a static constant, not user content */}
 				<style dangerouslySetInnerHTML={{ __html: GLOBAL_CSS }} />
 			</head>

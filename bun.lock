@@ -6,7 +6,11 @@
       "name": "divmemory",
       "devDependencies": {
         "@biomejs/biome": "^1.9.4",
+        "@types/node": "^22.15.18",
+        "drizzle-orm": "^0.42.0",
+        "hono": "^4.8.0",
         "typescript": "^5.7.3",
+        "vitest": "^3.2.2",
       },
     },
     "cli": {

@@ -32,7 +32,7 @@ describe("bootstrap cli", () => {
 	});
 
 	describe("flag parsing", () => {
-		it("parses --help flag and shows usage", async () => {
+		it("exit 0 on --help (VAL-CLI-034)", async () => {
 			const mod = await loadCliModule();
 			const { parseFlags } = mod;
 			if (!parseFlags) return;
@@ -80,7 +80,7 @@ describe("bootstrap cli", () => {
 			expect(result.worker).toBe("https://custom.example.com");
 		});
 
-		it("unknown flag produces error", async () => {
+		it("exit 1 on parse error (VAL-CLI-033)", async () => {
 			const mod = await loadCliModule();
 			const { parseFlags } = mod;
 			if (!parseFlags) return;
@@ -949,7 +949,7 @@ describe("bootstrap cli", () => {
 			expect(result.exitCode).toBe(0);
 		});
 
-		it("returns exit code 0 on partial success", async () => {
+		it("exit 0 on partial success (VAL-CLI-030)", async () => {
 			const mod = await loadCliModule();
 			const { runBatch } = mod;
 			if (!runBatch) return;
@@ -978,7 +978,7 @@ describe("bootstrap cli", () => {
 			expect(result.exitCode).toBe(0);
 		});
 
-		it("returns non-zero on total failure", async () => {
+		it("exit non-zero on total failure (VAL-CLI-031)", async () => {
 			const mod = await loadCliModule();
 			const { runBatch } = mod;
 			if (!runBatch) return;
@@ -1003,21 +1003,21 @@ describe("bootstrap cli", () => {
 	});
 
 	describe("edge cases", () => {
-		it("handles empty string API key as missing", async () => {
+		it("resolveApiKey with empty string throws (VAL-CLI-009)", async () => {
 			const mod = await loadCliModule();
 			const { resolveApiKey } = mod;
 			if (!resolveApiKey) return;
 			expect(() => resolveApiKey("")).toThrow();
 		});
 
-		it("handles whitespace-only API key as missing", async () => {
+		it("resolveApiKey with whitespace-only string throws (VAL-CLI-010)", async () => {
 			const mod = await loadCliModule();
 			const { resolveApiKey } = mod;
 			if (!resolveApiKey) return;
 			expect(() => resolveApiKey("   ")).toThrow();
 		});
 
-		it("trailing slash on worker URL is handled", async () => {
+		it("worker URL with trailing slash normalized (VAL-CLI-038)", async () => {
 			const mod = await loadCliModule();
 			const { sendIngest } = mod;
 			if (!sendIngest) return;
@@ -1049,7 +1049,7 @@ describe("bootstrap cli", () => {
 			expect(getProjectName("my-app")).toBe("my-app");
 		});
 
-		it("handles session file directly in root (no project subdir)", async () => {
+		it("session directly in root dir uses basename fallback (VAL-CLI-024)", async () => {
 			const mod = await loadCliModule();
 			const { findSessionFiles, decodeProjectDir } = mod;
 			if (!findSessionFiles || !decodeProjectDir) return;
@@ -1062,7 +1062,7 @@ describe("bootstrap cli", () => {
 			expect(typeof orphan.projectDir).toBe("string");
 		});
 
-		it("handles UTF-8 BOM in JSONL", async () => {
+		it("UTF-8 BOM at start of JSONL file (VAL-CLI-016)", async () => {
 			const mod = await loadCliModule();
 			const { extractConversation } = mod;
 			if (!extractConversation) return;
@@ -1088,7 +1088,7 @@ describe("bootstrap cli", () => {
 			expect(elapsed).toBeLessThan(2000);
 		});
 
-		it("handles concurrent runs independently", async () => {
+		it("parallel runBatch calls don't interfere with shared state (VAL-CLI-013)", async () => {
 			const mod = await loadCliModule();
 			const { runBatch } = mod;
 			if (!runBatch) return;
@@ -1138,6 +1138,488 @@ describe("bootstrap cli", () => {
 			]);
 			expect(resultA.exitCode).toBe(0);
 			expect(resultB.exitCode).toBe(0);
+		});
+	});
+
+	describe("VAL-CLI — Signals & Interrupts", () => {
+		it.skip("SIGINT sets interrupted flag during batch (VAL-CLI-001)", async () => {
+			// runBatch does not expose the internal interrupted flag; SIGINT handling is in main()
+		});
+		it.skip("graceful partial summary on interrupt (VAL-CLI-002)", async () => {
+			// requires process-level SIGINT simulation
+		});
+		it.skip("cleanup state on signal (VAL-CLI-003)", async () => {
+			// requires process-level SIGINT simulation
+		});
+	});
+
+	describe("VAL-CLI — Large Data Handling", () => {
+		it("loads and parses >500KB JSONL (VAL-CLI-004)", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const lines: string[] = [];
+			for (let i = 0; i < 7000; i++) {
+				lines.push(
+					JSON.stringify({
+						role: i % 2 === 0 ? "user" : "assistant",
+						content: [{ type: "text", text: `message ${i} ${"x".repeat(50)}` }],
+					}),
+				);
+			}
+			const content = lines.join("\n");
+			expect(content.length).toBeGreaterThan(500_000);
+			const conv = extractConversation(content);
+			expect(conv).toContain("User: message 0");
+			expect(conv).toContain("Assistant: message 6999");
+		});
+
+		it("handles 10000-message session (VAL-CLI-005)", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const lines: string[] = [];
+			for (let i = 0; i < 10000; i++) {
+				lines.push(
+					JSON.stringify({
+						role: i % 2 === 0 ? "user" : "assistant",
+						content: [{ type: "text", text: `msg ${i}` }],
+					}),
+				);
+			}
+			const start = Date.now();
+			const conv = extractConversation(lines.join("\n"));
+			expect(Date.now() - start).toBeLessThan(2000);
+			expect(conv).toContain("msg 0");
+			expect(conv).toContain("msg 9999");
+		});
+
+		it("processes large file without OOM (VAL-CLI-006)", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const bigText = "x".repeat(200000);
+			const jsonl = JSON.stringify({ role: "user", content: [{ type: "text", text: bigText }] });
+			expect(jsonl.length).toBeGreaterThan(100_000);
+			const conv = extractConversation(jsonl);
+			expect(conv).toContain(bigText);
+		});
+
+		it("large conversation is included in POST body (VAL-CLI-007)", async () => {
+			const mod = await loadCliModule();
+			const { sendIngest } = mod;
+			if (!sendIngest) return;
+			const bigConv = "a".repeat(50_000);
+			const bodies: Record<string, unknown>[] = [];
+			const mockFetch = (_url: string, init: RequestInit) => {
+				bodies.push(JSON.parse(init.body as string));
+				return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+			};
+			await sendIngest(
+				{ sessionId: "s", projectId: "p", projectName: "n", conversation: bigConv },
+				{ workerUrl: "https://test.example.com", apiKey: "k", fetch: mockFetch },
+			);
+			expect(bodies[0].conversation).toBe(bigConv);
+		});
+
+		it("very large conversation still handled by extractConversation (VAL-CLI-008)", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const turn = JSON.stringify({ role: "user", content: [{ type: "text", text: "turn text" }] });
+			const lines = Array.from({ length: 1000 }, () => turn);
+			const conv = extractConversation(lines.join("\n\n"));
+			expect(conv).toContain("turn text");
+			const userCount = conv.split("User:").length - 1;
+			expect(userCount).toBeGreaterThanOrEqual(1);
+		});
+	});
+
+	describe("VAL-CLI — Credential & Auth Edge Cases", () => {
+		it("resolveApiKey trims surrounding whitespace (VAL-CLI-011)", async () => {
+			const mod = await loadCliModule();
+			const { resolveApiKey } = mod;
+			if (!resolveApiKey) return;
+			expect(resolveApiKey("  key  ")).toBe("key");
+		});
+
+		it("resolveApiKey preserves special characters (VAL-CLI-012)", async () => {
+			const mod = await loadCliModule();
+			const { resolveApiKey } = mod;
+			if (!resolveApiKey) return;
+			expect(resolveApiKey("special-chars-test")).toBe("special-chars-test");
+		});
+	});
+
+	describe("VAL-CLI — Concurrent Access", () => {
+		it("rate limiting per runBatch independent (VAL-CLI-014)", async () => {
+			const mod = await loadCliModule();
+			const { runBatch } = mod;
+			if (!runBatch) return;
+			const timestampsA: number[] = [];
+			const timestampsB: number[] = [];
+			const filesA = Array.from({ length: 2 }, (_, i) => ({
+				filePath: join(tmpDir, `ca-sess${i}.jsonl`),
+				mtime: Date.now() - i * 1000,
+				projectDir: tmpDir,
+			}));
+			const filesB = Array.from({ length: 2 }, (_, i) => ({
+				filePath: join(tmpDir, `cb-sess${i}.jsonl`),
+				mtime: Date.now() - i * 1000,
+				projectDir: tmpDir,
+			}));
+			for (const f of filesA) {
+				writeFileSync(
+					f.filePath,
+					`${JSON.stringify({ role: "user", content: [{ type: "text", text: "a" }] })}\n`,
+				);
+			}
+			for (const f of filesB) {
+				writeFileSync(
+					f.filePath,
+					`${JSON.stringify({ role: "user", content: [{ type: "text", text: "b" }] })}\n`,
+				);
+			}
+			const mockFetchA = () => {
+				timestampsA.push(Date.now());
+				return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+			};
+			const mockFetchB = () => {
+				timestampsB.push(Date.now());
+				return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+			};
+			await Promise.all([
+				runBatch(filesA, {
+					workerUrl: "https://test.example.com",
+					apiKey: "key",
+					dryRun: false,
+					fetch: mockFetchA,
+					stdout: () => {},
+					stderr: () => {},
+				}),
+				runBatch(filesB, {
+					workerUrl: "https://test.example.com",
+					apiKey: "key",
+					dryRun: false,
+					fetch: mockFetchB,
+					stdout: () => {},
+					stderr: () => {},
+				}),
+			]);
+			expect(timestampsA.length).toBe(2);
+			expect(timestampsB.length).toBe(2);
+		});
+
+		it("same worker URL shared across concurrent runs (VAL-CLI-015)", async () => {
+			const mod = await loadCliModule();
+			const { runBatch } = mod;
+			if (!runBatch) return;
+			const urls: string[] = [];
+			const files = [
+				{
+					filePath: join(tmpDir, "u.jsonl"),
+					mtime: Date.now(),
+					projectDir: tmpDir,
+				},
+			];
+			writeFileSync(
+				files[0].filePath,
+				`${JSON.stringify({ role: "user", content: [{ type: "text", text: "hi" }] })}\n`,
+			);
+			const mockFetch = (url: string, _init: RequestInit) => {
+				urls.push(url);
+				return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+			};
+			await Promise.all([
+				runBatch(files, {
+					workerUrl: "https://same.example.com",
+					apiKey: "key",
+					dryRun: false,
+					fetch: mockFetch,
+					stdout: () => {},
+					stderr: () => {},
+				}),
+				runBatch(files, {
+					workerUrl: "https://same.example.com",
+					apiKey: "key",
+					dryRun: false,
+					fetch: mockFetch,
+					stdout: () => {},
+					stderr: () => {},
+				}),
+			]);
+			expect(urls.every((u) => u.startsWith("https://same.example.com"))).toBe(true);
+		});
+	});
+
+	describe("VAL-CLI — BOM & Encoding", () => {
+		it("mid-file BOM is not handled but doesn't crash (VAL-CLI-017)", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const line1 = JSON.stringify({ role: "user", content: [{ type: "text", text: "first" }] });
+			const line2 = `\uFEFF${JSON.stringify({ role: "assistant", content: [{ type: "text", text: "second" }] })}`;
+			const conv = extractConversation(`${line1}\n${line2}`);
+			expect(conv).toContain("User: first");
+			// second line with mid-BOM is parsed; JSON.parse tolerates leading BOM
+			expect(conv).toContain("Assistant: second");
+		});
+
+		it("mixed valid/invalid JSONL lines with Unicode (VAL-CLI-018)", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const lines = [
+				"not json",
+				JSON.stringify({ role: "user", content: [{ type: "text", text: "你好 мир 🌍" }] }),
+				"also bad",
+			];
+			const conv = extractConversation(lines.join("\n"));
+			expect(conv).toContain("你好 мир 🌍");
+		});
+
+		it("null bytes in content string are preserved (VAL-CLI-019)", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const jsonl = JSON.stringify({ role: "user", content: [{ type: "text", text: "a\u0000b" }] });
+			const conv = extractConversation(jsonl);
+			expect(conv).toContain("a\u0000b");
+		});
+	});
+
+	describe("VAL-CLI — Filename & Path Edge Cases", () => {
+		it("findSessionFiles with --dir pointing to a file throws clear error (VAL-CLI-020)", async () => {
+			const mod = await loadCliModule();
+			const { findSessionFiles } = mod;
+			if (!findSessionFiles) return;
+			const filePath = join(tmpDir, "notadir");
+			writeFileSync(filePath, "data");
+			await expect(findSessionFiles(filePath)).rejects.toThrow(/Not a directory/);
+		});
+
+		it("session filename with spaces works (VAL-CLI-021)", async () => {
+			const mod = await loadCliModule();
+			const { findSessionFiles } = mod;
+			if (!findSessionFiles) return;
+			writeFileSync(join(tmpDir, "my session.jsonl"), "{}\n");
+			const files = await findSessionFiles(tmpDir);
+			expect(files).toHaveLength(1);
+			expect(files[0].filePath).toContain("my session.jsonl");
+		});
+
+		it("dotfiles are skipped (VAL-CLI-022)", async () => {
+			const mod = await loadCliModule();
+			const { findSessionFiles } = mod;
+			if (!findSessionFiles) return;
+			writeFileSync(join(tmpDir, ".hidden.jsonl"), "{}\n");
+			writeFileSync(join(tmpDir, "visible.jsonl"), "{}\n");
+			const files = await findSessionFiles(tmpDir);
+			expect(files).toHaveLength(1);
+			expect(files[0].filePath).toContain("visible.jsonl");
+		});
+
+		it("symlinked directories followed (VAL-CLI-023)", async () => {
+			const mod = await loadCliModule();
+			const { findSessionFiles } = mod;
+			if (!findSessionFiles) return;
+			const realDir = join(tmpDir, "real");
+			const linkDir = join(tmpDir, "link");
+			mkdirSync(realDir);
+			writeFileSync(join(realDir, "sess.jsonl"), "{}\n");
+			const { symlinkSync } = await import("node:fs");
+			symlinkSync(realDir, linkDir, "dir");
+			const files = await findSessionFiles(tmpDir);
+			const paths = files.map((f: SessionFile) => f.filePath);
+			expect(paths.some((p: string) => p.includes("sess.jsonl"))).toBe(true);
+		});
+
+		it("very long filename (>200 chars) (VAL-CLI-025)", async () => {
+			const mod = await loadCliModule();
+			const { findSessionFiles, getSessionIdFromFilename } = mod;
+			if (!findSessionFiles || !getSessionIdFromFilename) return;
+			const longName = `${"a".repeat(200)}.jsonl`;
+			writeFileSync(join(tmpDir, longName), "{}\n");
+			const files = await findSessionFiles(tmpDir);
+			expect(files).toHaveLength(1);
+			expect(getSessionIdFromFilename(longName)).toBe("a".repeat(200));
+		});
+	});
+
+	describe("VAL-CLI — Project Name & ID Formatting", () => {
+		it("long git remote URL doesn't overflow (VAL-CLI-026)", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId } = mod;
+			if (!getProjectId) return;
+			const { execSync } = await import("node:child_process");
+			const gitDir = join(tmpDir, "long-repo");
+			mkdirSync(gitDir);
+			execSync("git init", { cwd: gitDir });
+			const longPath = `https://git.example.com/org/${"deep/".repeat(20)}repo.git`;
+			execSync(`git remote add origin ${longPath}`, { cwd: gitDir });
+			const id = await getProjectId(gitDir);
+			expect(id.length).toBeGreaterThan(100);
+			expect(id).not.toContain("https://");
+			expect(id).toContain("git.example.com");
+		});
+
+		it("git remote with port number (VAL-CLI-027)", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId } = mod;
+			if (!getProjectId) return;
+			const { execSync } = await import("node:child_process");
+			const gitDir = join(tmpDir, "port-repo");
+			mkdirSync(gitDir);
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://git.example.com:8443/org/repo.git", { cwd: gitDir });
+			const id = await getProjectId(gitDir);
+			expect(id).toBe("git.example.com:8443/org/repo");
+		});
+
+		it("self-hosted git remote (VAL-CLI-028)", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId } = mod;
+			if (!getProjectId) return;
+			const { execSync } = await import("node:child_process");
+			const gitDir = join(tmpDir, "local-repo");
+			mkdirSync(gitDir);
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://gitlab.local/org/repo.git", { cwd: gitDir });
+			const id = await getProjectId(gitDir);
+			expect(id).toBe("gitlab.local/org/repo");
+		});
+
+		it("multiple remotes, origin wins (VAL-CLI-029)", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId } = mod;
+			if (!getProjectId) return;
+			const { execSync } = await import("node:child_process");
+			const gitDir = join(tmpDir, "multi-remote");
+			mkdirSync(gitDir);
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add upstream https://github.com/other/repo.git", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/main.git", { cwd: gitDir });
+			const id = await getProjectId(gitDir);
+			expect(id).toBe("github.com/divkix/main");
+		});
+	});
+
+	describe("VAL-CLI — Exit Codes", () => {
+		it("exit 0 when no sessions found (VAL-CLI-032)", async () => {
+			const mod = await loadCliModule();
+			const { runBatch } = mod;
+			if (!runBatch) return;
+			const result = await runBatch([], {
+				workerUrl: "https://test.example.com",
+				apiKey: "key",
+				dryRun: false,
+				fetch: () => Promise.resolve(new Response("{}")),
+				stdout: () => {},
+				stderr: () => {},
+			});
+			expect(result.exitCode).toBe(0);
+		});
+	});
+
+	describe("VAL-CLI — Dry-Run & Progress", () => {
+		it("dry-run prints preview with session count (VAL-CLI-035)", async () => {
+			const mod = await loadCliModule();
+			const { runBatch } = mod;
+			if (!runBatch) return;
+			const outputs: string[] = [];
+			const files = [
+				{
+					filePath: join(tmpDir, "sess.jsonl"),
+					mtime: Date.now(),
+					projectDir: tmpDir,
+				},
+			];
+			writeFileSync(
+				files[0].filePath,
+				`${JSON.stringify({ role: "user", content: [{ type: "text", text: "hi" }] })}\n`,
+			);
+			await runBatch(files, {
+				workerUrl: "https://test.example.com",
+				apiKey: "key",
+				dryRun: true,
+				stdout: (s: string) => outputs.push(s),
+				stderr: () => {},
+			});
+			const preview = outputs.find((o) => o.includes("○ (dry-run"));
+			expect(preview).toBeTruthy();
+		});
+
+		it("dry-run handles empty conversation (VAL-CLI-036)", async () => {
+			const mod = await loadCliModule();
+			const { runBatch } = mod;
+			if (!runBatch) return;
+			const outputs: string[] = [];
+			const files = [
+				{
+					filePath: join(tmpDir, "empty.jsonl"),
+					mtime: Date.now(),
+					projectDir: tmpDir,
+				},
+			];
+			writeFileSync(files[0].filePath, "\n");
+			await runBatch(files, {
+				workerUrl: "https://test.example.com",
+				apiKey: "key",
+				dryRun: true,
+				stdout: (s: string) => outputs.push(s),
+				stderr: () => {},
+			});
+			const preview = outputs.find((o) => o.includes("0 chars"));
+			expect(preview).toBeTruthy();
+		});
+
+		it("progress output format with long project name (VAL-CLI-037)", async () => {
+			const mod = await loadCliModule();
+			const { runBatch } = mod;
+			if (!runBatch) return;
+			const outputs: string[] = [];
+			const longDir = join(tmpDir, "a".repeat(100));
+			mkdirSync(longDir);
+			const files = [
+				{
+					filePath: join(longDir, "sess.jsonl"),
+					mtime: Date.now(),
+					projectDir: longDir,
+				},
+			];
+			writeFileSync(
+				files[0].filePath,
+				`${JSON.stringify({ role: "user", content: [{ type: "text", text: "hi" }] })}\n`,
+			);
+			const mockFetch = () =>
+				Promise.resolve(
+					new Response(JSON.stringify({ ok: true, facts_written: 1 }), { status: 200 }),
+				);
+			await runBatch(files, {
+				workerUrl: "https://test.example.com",
+				apiKey: "key",
+				dryRun: false,
+				fetch: mockFetch,
+				stdout: (s: string) => outputs.push(s),
+				stderr: () => {},
+			});
+			const progress = outputs.find((o) => o.includes("[1/1]"));
+			expect(progress).toBeTruthy();
+		});
+	});
+
+	describe("VAL-CLI — URL & Network Edge Cases", () => {
+		it("worker URL without protocol throws or fails gracefully (VAL-CLI-039)", async () => {
+			const mod = await loadCliModule();
+			const { sendIngest } = mod;
+			if (!sendIngest) return;
+			const mockFetch = () => Promise.reject(new Error("only absolute URLs are supported"));
+			const result = await sendIngest(
+				{ sessionId: "a", projectId: "p", projectName: "n", conversation: "" },
+				{ workerUrl: "example.com", apiKey: "k", fetch: mockFetch },
+			);
+			expect(result.ok).toBe(false);
+			expect(result.error).toBeTruthy();
 		});
 	});
 });

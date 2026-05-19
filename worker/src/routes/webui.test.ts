@@ -768,3 +768,331 @@ describe("Web UI — Main Page", () => {
 		expect(html).not.toContain("Issues");
 	});
 });
+
+/* ───────── DOCUMENT STRUCTURE ───────── */
+
+describe("Web UI — Document Structure", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	let sqlite: Database;
+	let app: ReturnType<typeof createTestApp>;
+
+	beforeEach(() => {
+		_seedCounter = 0;
+		rateLimitStore.clear();
+		testDb = createTestDb();
+		sqlite = testDb.sqlite;
+		app = createTestApp(testDb.db, sqlite);
+	});
+
+	it("html lang attribute (VAL-UI-105)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('lang="en"');
+	});
+
+	it("meta charset present (VAL-UI-106)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('charset="UTF-8"');
+	});
+
+	it("meta viewport present (VAL-UI-107)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('name="viewport"');
+		expect(html).toContain("width=device-width");
+	});
+
+	it("title element (VAL-UI-108)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain("<title>");
+		expect(html).toContain("divmemory");
+		expect(html).toContain("</title>");
+	});
+
+	it("favicon link present (VAL-UI-109)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('rel="icon"');
+	});
+
+	it("og:title meta (VAL-UI-110)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('property="og:title"');
+		expect(html).toContain("divmemory");
+	});
+
+	it("og:description meta (VAL-UI-111)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('property="og:description"');
+	});
+
+	it("og:type meta (VAL-UI-112)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('property="og:type"');
+		expect(html).toContain('content="website"');
+	});
+});
+
+/* ───────── ACCESSIBILITY ───────── */
+
+describe("Web UI — Accessibility", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	let sqlite: Database;
+	let app: ReturnType<typeof createTestApp>;
+
+	beforeEach(() => {
+		_seedCounter = 0;
+		rateLimitStore.clear();
+		testDb = createTestDb();
+		sqlite = testDb.sqlite;
+		app = createTestApp(testDb.db, sqlite);
+	});
+
+	it("login form password input has label (VAL-UI-113)", async () => {
+		const res = await app.fetch(new Request("http://localhost/login"), webEnvVars());
+		const html = await res.text();
+		expect(html).toContain('for="web-password"');
+		expect(html).toContain('id="web-password"');
+	});
+
+	it("login submit button accessible text (VAL-UI-114)", async () => {
+		const res = await app.fetch(new Request("http://localhost/login"), webEnvVars());
+		const html = await res.text();
+		expect(html).toContain("Sign in");
+	});
+
+	it("password input has autofocus (VAL-UI-115)", async () => {
+		const res = await app.fetch(new Request("http://localhost/login"), webEnvVars());
+		const html = await res.text();
+		expect(html).toContain("autofocus");
+	});
+
+	it("semantic nav element for sidebar (VAL-UI-116)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('<nav class="sidebar">');
+	});
+
+	it("heading hierarchy has single h1 (VAL-UI-117)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/?project=p1"), webEnvVars(), {
+			headers,
+		});
+		const html = await res.text();
+		const h1Matches = html.match(/<h1[\s>]/g);
+		expect(h1Matches?.length ?? 0).toBe(1);
+	});
+
+	it("no img tags without alt on page (VAL-UI-118)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		seedMemory(sqlite, "p1", "Fact");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/?project=p1"), webEnvVars(), {
+			headers,
+		});
+		const html = await res.text();
+		const imgMatches = html.match(/<img\s[^>]*>/g) ?? [];
+		for (const img of imgMatches) {
+			expect(img).toContain("alt=");
+		}
+	});
+});
+
+/* ───────── HTTP HEADERS & RESPONSE CODES ───────── */
+
+describe("Web UI — HTTP Headers & Response Codes", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	let sqlite: Database;
+	let app: ReturnType<typeof createTestApp>;
+
+	beforeEach(() => {
+		_seedCounter = 0;
+		rateLimitStore.clear();
+		testDb = createTestDb();
+		sqlite = testDb.sqlite;
+		app = createTestApp(testDb.db, sqlite);
+	});
+
+	it("Content-Type text/html on GET (VAL-UI-119)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Type")).toContain("text/html");
+	});
+
+	it("Content-Type text/html on login (VAL-UI-120)", async () => {
+		const res = await app.fetch(new Request("http://localhost/login"), webEnvVars());
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Type")).toContain("text/html");
+	});
+
+	it("login redirect 302 (VAL-UI-121)", async () => {
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars());
+		expect(res.status).toBe(302);
+		expect(res.headers.get("Location")).toContain("/login");
+	});
+
+	it("successful form POST redirects 302 (VAL-UI-122)", async () => {
+		seedProject(sqlite, "p1");
+		const mid = seedMemory(sqlite, "p1", "Fact", { curated: 0 });
+		const headers = await cookieHeaders();
+		const res = await postForm(
+			app,
+			`http://localhost/?project=p1&delete=${mid}`,
+			{ _method: "DELETE", delete: mid, confirm: "true", project: "p1" },
+			headers,
+		);
+		expect(res.status).toBe(302);
+	});
+
+	it("error page content type preserved (VAL-UI-123)", async () => {
+		seedProject(sqlite, "exist", "Existing");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(
+			new Request("http://localhost/?project=nonexistent-id"),
+			webEnvVars(),
+			{ headers },
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("Content-Type")).toContain("text/html");
+	});
+});
+
+/* ───────── LONG CONTENT & EDGE CASES ───────── */
+
+describe("Web UI — Long Content & Edge Cases", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	let sqlite: Database;
+	let app: ReturnType<typeof createTestApp>;
+
+	beforeEach(() => {
+		_seedCounter = 0;
+		rateLimitStore.clear();
+		testDb = createTestDb();
+		sqlite = testDb.sqlite;
+		app = createTestApp(testDb.db, sqlite);
+	});
+
+	it("very long memory content renders (VAL-UI-124)", async () => {
+		seedProject(sqlite, "p1");
+		const longContent = "A".repeat(15000);
+		seedMemory(sqlite, "p1", longContent);
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/?project=p1"), webEnvVars(), {
+			headers,
+		});
+		const html = await res.text();
+		expect(html).toContain(longContent.slice(0, 50));
+	});
+
+	it("emoji in memory content (VAL-UI-125)", async () => {
+		seedProject(sqlite, "p1");
+		seedMemory(sqlite, "p1", "🚀 🧠 🎉 fact");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/?project=p1"), webEnvVars(), {
+			headers,
+		});
+		const html = await res.text();
+		expect(html).toContain("🚀 🧠 🎉 fact");
+	});
+
+	it("very long project name sidebar (VAL-UI-126)", async () => {
+		const longName = "B".repeat(200);
+		seedProject(sqlite, "p1", longName);
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain(longName.slice(0, 30));
+	});
+
+	it("session with very long ID (VAL-UI-127)", async () => {
+		seedProject(sqlite, "p1");
+		const longId = "C".repeat(100);
+		seedSession(sqlite, "p1", { id: longId });
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/?project=p1"), webEnvVars(), {
+			headers,
+		});
+		const html = await res.text();
+		expect(html).toContain(longId);
+	});
+
+	it("unusual characters in memory (VAL-UI-128)", async () => {
+		seedProject(sqlite, "p1");
+		seedMemory(sqlite, "p1", "<>&\"'test");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/?project=p1"), webEnvVars(), {
+			headers,
+		});
+		const html = await res.text();
+		expect(html).not.toContain("<>&\"'test");
+		expect(html).toContain("&lt;");
+	});
+});
+
+/* ───────── MISC COSMETIC ───────── */
+
+describe("Web UI — Misc Cosmetic", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	let sqlite: Database;
+	let app: ReturnType<typeof createTestApp>;
+
+	beforeEach(() => {
+		_seedCounter = 0;
+		rateLimitStore.clear();
+		testDb = createTestDb();
+		sqlite = testDb.sqlite;
+		app = createTestApp(testDb.db, sqlite);
+	});
+
+	it("sidebar empty state message (VAL-UI-129)", async () => {
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain("No projects yet.");
+	});
+
+	it("Hono JSX renders valid HTML document (VAL-UI-130)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain('<html lang="en">');
+		expect(html).toContain("</html>");
+		expect(html).toContain("<body>");
+		expect(html).toContain("</body>");
+	});
+
+	it("CSS is embedded via style tag (VAL-UI-131)", async () => {
+		seedProject(sqlite, "p1", "Project One");
+		const headers = await cookieHeaders();
+		const res = await app.fetch(new Request("http://localhost/"), webEnvVars(), { headers });
+		const html = await res.text();
+		expect(html).toContain("<style>");
+	});
+});
