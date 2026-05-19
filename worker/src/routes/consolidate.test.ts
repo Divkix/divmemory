@@ -113,7 +113,7 @@ function seedSessions(
 ) {
 	// Idempotent upsert for project using native sqlite.run with spread args
 	sqlite.run(
-		`INSERT OR IGNORE INTO projects (id, name, session_count, created_at, last_seen) VALUES (?, ?, ?, ?, ?)`,
+		"INSERT OR IGNORE INTO projects (id, name, session_count, created_at, last_seen) VALUES (?, ?, ?, ?, ?)",
 		projectId,
 		projectId,
 		count,
@@ -123,7 +123,7 @@ function seedSessions(
 	const idPrefix = prefix ?? `sess-${projectId}`;
 	for (let i = 0; i < count; i++) {
 		sqlite.run(
-			`INSERT OR IGNORE INTO sessions (id, project_id, source, raw_text, consolidated, extraction_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			"INSERT OR IGNORE INTO sessions (id, project_id, source, raw_text, consolidated, extraction_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 			`${idPrefix}-${++_seedCounter}`,
 			projectId,
 			"droid",
@@ -144,7 +144,7 @@ function seedMemory(
 ) {
 	const sessionId = overrides?.sourceSession ?? `sess-${projectId}-seed`;
 	sqlite.run(
-		`INSERT OR IGNORE INTO sessions (id, project_id, source, raw_text, consolidated, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"INSERT OR IGNORE INTO sessions (id, project_id, source, raw_text, consolidated, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		sessionId,
 		projectId,
 		"droid",
@@ -153,7 +153,7 @@ function seedMemory(
 		new Date().toISOString(),
 	);
 	sqlite.run(
-		`INSERT INTO memories (id, project_id, source_session, topic, content, confidence, curated, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"INSERT INTO memories (id, project_id, source_session, topic, content, confidence, curated, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		crypto.randomUUID(),
 		projectId,
 		sessionId,

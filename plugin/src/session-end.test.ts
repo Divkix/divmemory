@@ -55,7 +55,7 @@ describe("session-end hook", () => {
 		};
 	}
 
-	function makeStdin(overrides: Record<string, unknown> = {}, event: string = "SessionEnd") {
+	function makeStdin(overrides: Record<string, unknown> = {}, event = "SessionEnd") {
 		return JSON.stringify({
 			session_id: "test-session-1",
 			cwd: tmpDir,
@@ -411,7 +411,7 @@ describe("session-end hook", () => {
 			const jsonl = [
 				"not json",
 				JSON.stringify({ role: "user", content: "hello" }),
-				`{invalid`,
+				"{invalid",
 				JSON.stringify({ role: "assistant", content: "hi" }),
 			].join("\n");
 			const conv = extractConversation(jsonl);
@@ -588,7 +588,7 @@ describe("session-end hook", () => {
 				"utf-8",
 			);
 			process.env.DIVMEMORY_API_KEY = "test-key";
-			delete process.env.DIVMEMORY_WORKER_URL;
+			process.env.DIVMEMORY_WORKER_URL = undefined;
 			const fetchFn = mockFetch();
 			await processSessionEnd(stdin, {
 				fetch: fetchFn,
@@ -636,7 +636,7 @@ describe("session-end hook", () => {
 				makeJsonl([{ role: "user", content: "hi" }]),
 				"utf-8",
 			);
-			delete process.env.DIVMEMORY_API_KEY;
+			process.env.DIVMEMORY_API_KEY = undefined;
 			const fetchFn = mockFetch();
 			const result = await processSessionEnd(stdin, {
 				fetch: fetchFn,
@@ -756,7 +756,7 @@ describe("session-end hook", () => {
 
 		it("handles missing transcript_path quietly (VAL-PLUGIN-024)", async () => {
 			const stdin = makeStdin({});
-			delete (JSON.parse(stdin) as Record<string, unknown>).transcript_path;
+			(JSON.parse(stdin) as Record<string, unknown>).transcript_path = undefined;
 			const stdinNoPath = JSON.stringify({
 				...JSON.parse(makeStdin()),
 				transcript_path: undefined,

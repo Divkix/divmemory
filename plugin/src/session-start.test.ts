@@ -54,7 +54,7 @@ describe("session-start hook", () => {
 		};
 	}
 
-	function makeStdin(overrides: Record<string, unknown> = {}, event: string = "SessionStart") {
+	function makeStdin(overrides: Record<string, unknown> = {}, event = "SessionStart") {
 		return JSON.stringify({
 			session_id: "test-session-1",
 			cwd: tmpDir,
@@ -286,7 +286,7 @@ describe("session-start hook", () => {
 
 		it("exits 0 when DIVMEMORY_API_KEY is missing — error to stderr (VAL-PLUGIN-050)", async () => {
 			const stdin = makeStdin();
-			delete process.env.DIVMEMORY_API_KEY;
+			process.env.DIVMEMORY_API_KEY = undefined;
 			const fetchFn = mockFetch();
 			const result = await processSessionStart(stdin, {
 				fetch: fetchFn,
@@ -327,7 +327,7 @@ describe("session-start hook", () => {
 		it("uses default worker URL when DIVMEMORY_WORKER_URL unset (VAL-PLUGIN-057)", async () => {
 			const stdin = makeStdin();
 			process.env.DIVMEMORY_API_KEY = "test-key";
-			delete process.env.DIVMEMORY_WORKER_URL;
+			process.env.DIVMEMORY_WORKER_URL = undefined;
 			const fetchFn = mockFetch();
 			await processSessionStart(stdin, {
 				fetch: fetchFn,

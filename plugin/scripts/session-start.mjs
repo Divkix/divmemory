@@ -25,8 +25,12 @@ export async function getProjectId(cwd) {
 			});
 			let stdout = "";
 			let stderr = "";
-			child.stdout.on("data", (d) => (stdout += d));
-			child.stderr.on("data", (d) => (stderr += d));
+			child.stdout.on("data", (d) => {
+				stdout += d;
+			});
+			child.stderr.on("data", (d) => {
+				stderr += d;
+			});
 			child.on("error", (err) => reject(err));
 			child.on("close", (code) => {
 				if (code === 0) resolve(stdout.trim());
