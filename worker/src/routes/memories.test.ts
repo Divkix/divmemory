@@ -22,7 +22,8 @@ function createTestDb() {
 			name TEXT,
 			session_count INTEGER DEFAULT 0,
 			created_at TEXT,
-			last_seen TEXT
+			last_seen TEXT,
+			consolidation_in_progress INTEGER DEFAULT 0
 		);
 		CREATE TABLE sessions (
 			id TEXT PRIMARY KEY NOT NULL,

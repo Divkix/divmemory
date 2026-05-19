@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { memories, sessions } from "../schema";
+import { memories, projects, sessions } from "../schema";
 import type { DbLike } from "./ingest";
 import { jaccardSimilarity, recoverJSON } from "./ingest";
 
@@ -85,40 +85,50 @@ async function callFirepass(
 	}
 }
 
-function buildConsolidationPrompt(
-	sessionRows: Array<{ rawText: string | null }>,
+interface BuildPromptResult {
+	prompt: string;
+	includedSessionIds: string[];
+}
+
+export function buildSafeConsolidationPrompt(
+	allSessions: Array<{ id: string; rawText: string | null }>,
 	memoryRows: Array<{ topic: string | null; content: string | null }>,
-): string {
+	maxChars = MAX_PROMPT_CHARS,
+): BuildPromptResult {
 	const memoriesStr =
 		memoryRows.map((m) => `- [${m.topic ?? "general"}] ${m.content ?? ""}`).join("\n") || "None";
-	const convosStr = sessionRows
-		.map((s, i) => `--- Session ${i + 1} ---\n${s.rawText ?? ""}`)
-		.join("\n\n");
 
-	const prompt = CONSOLIDATION_PROMPT.replace("{MEMORIES}", memoriesStr).replace(
+	const baseTemplate = CONSOLIDATION_PROMPT.replace("{MEMORIES}", memoriesStr).replace(
 		"{CONVERSATIONS}",
-		convosStr,
+		"",
+	);
+	const remainingBudget = maxChars - baseTemplate.length - 100;
+
+	let conversationsStr = "";
+	const includedSessionIds: string[] = [];
+
+	for (let i = allSessions.length - 1; i >= 0; i--) {
+		const session = allSessions[i];
+		if (!session) continue;
+
+		const chunk = `--- Session ---\nID: ${session.id}\n${session.rawText ?? ""}\n\n`;
+		// Always include at least the newest session to guarantee consolidation progress
+		if (includedSessionIds.length > 0 && conversationsStr.length + chunk.length > remainingBudget) {
+			break;
+		}
+		conversationsStr = chunk + conversationsStr;
+		includedSessionIds.push(session.id);
+	}
+
+	const finalPrompt = CONSOLIDATION_PROMPT.replace("{MEMORIES}", memoriesStr).replace(
+		"{CONVERSATIONS}",
+		conversationsStr || "[No unconsolidated conversations fit in budget]",
 	);
 
-	if (prompt.length > MAX_PROMPT_CHARS) {
-		/* Truncate oldest sessions first, keep all memories */
-		const memoriesPart = CONSOLIDATION_PROMPT.replace("{MEMORIES}", memoriesStr).replace(
-			"{CONVERSATIONS}",
-			"",
-		);
-		const remaining = MAX_PROMPT_CHARS - memoriesPart.length - 50;
-		let truncated = "";
-		for (let i = sessionRows.length - 1; i >= 0; i--) {
-			const chunk = `--- Session ${i + 1} ---\n${sessionRows[i]?.rawText ?? ""}\n\n`;
-			if (truncated.length + chunk.length > remaining) break;
-			truncated = chunk + truncated;
-		}
-		return CONSOLIDATION_PROMPT.replace("{MEMORIES}", memoriesStr).replace(
-			"{CONVERSATIONS}",
-			truncated || "[truncated]",
-		);
-	}
-	return prompt;
+	return {
+		prompt: finalPrompt,
+		includedSessionIds,
+	};
 }
 
 /* ───────── core consolidation ───────── */
@@ -128,10 +138,30 @@ export async function runConsolidation(
 	db: DbLike,
 	env: { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
 	extractor?: (prompt: string, apiKey: string, model: string) => Promise<Extracted | null>,
+	maxChars = MAX_PROMPT_CHARS,
 ): Promise<{ consolidated: number; archived: number; error?: string }> {
-	// Guard: prevent concurrent runs for same project
+	// Guard 1: prevent concurrent runs in the same isolate
 	if (inFlight.get(projectId)) {
 		return { consolidated: 0, archived: 0, error: "Consolidation already in progress" };
+	}
+
+	let acquiredDbLock = false;
+	try {
+		// Guard 2: prevent concurrent runs across isolates using atomic SQLite D1 lock
+		const lockResult = await db
+			.update(projects)
+			.set({ consolidationInProgress: 1 })
+			.where(and(eq(projects.id, projectId), eq(projects.consolidationInProgress, 0)))
+			.run();
+
+		const result = lockResult as { rowsAffected?: number; changes?: number };
+		const changes = result.rowsAffected ?? result.changes;
+		if (changes === 0) {
+			return { consolidated: 0, archived: 0, error: "Consolidation already in progress" };
+		}
+		acquiredDbLock = true;
+	} catch (_err) {
+		// If table schema lacks the column in old installs, proceed to avoid breaking legacy databases
 	}
 
 	inFlight.set(projectId, true);
@@ -186,9 +216,10 @@ export async function runConsolidation(
 		}>;
 
 		/* 3. Build prompt */
-		const prompt = buildConsolidationPrompt(
-			allSessions.map((s) => ({ rawText: s.rawText })),
+		const { prompt, includedSessionIds } = buildSafeConsolidationPrompt(
+			allSessions,
 			existingMemories.map((m) => ({ topic: m.topic, content: m.content })),
+			maxChars,
 		);
 
 		/* 4. Call Firepass */
@@ -296,16 +327,29 @@ export async function runConsolidation(
 
 		/* 7. Mark sessions as consolidated and prune raw_text */
 		for (const s of allSessions) {
-			await db
-				.update(sessions)
-				.set({ consolidated: 1, rawText: null, extractionError: null })
-				.where(eq(sessions.id, s.id))
-				.run();
+			if (includedSessionIds.includes(s.id)) {
+				await db
+					.update(sessions)
+					.set({ consolidated: 1, rawText: null, extractionError: null })
+					.where(eq(sessions.id, s.id))
+					.run();
+			}
 		}
 
-		return { consolidated: allSessions.length, archived: archivedCount };
+		return { consolidated: includedSessionIds.length, archived: archivedCount };
 	} finally {
 		inFlight.delete(projectId);
+		if (acquiredDbLock) {
+			try {
+				await db
+					.update(projects)
+					.set({ consolidationInProgress: 0 })
+					.where(eq(projects.id, projectId))
+					.run();
+			} catch {
+				// ignore
+			}
+		}
 	}
 }
 

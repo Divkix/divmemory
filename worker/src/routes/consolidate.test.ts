@@ -5,8 +5,13 @@ import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
 import { csrfValidate } from "../csrf";
-import { memories, sessions } from "../schema";
-import { createConsolidateRoute, isConsolidationInFlight, runConsolidation } from "./consolidate";
+import { memories, projects, sessions } from "../schema";
+import {
+	buildSafeConsolidationPrompt,
+	createConsolidateRoute,
+	isConsolidationInFlight,
+	runConsolidation,
+} from "./consolidate";
 
 const TEST_API_KEY = "test-api-key-123";
 
@@ -22,7 +27,8 @@ function createTestDb() {
 			name TEXT,
 			session_count INTEGER DEFAULT 0,
 			created_at TEXT,
-			last_seen TEXT
+			last_seen TEXT,
+			consolidation_in_progress INTEGER DEFAULT 0
 		);
 		CREATE TABLE sessions (
 			id TEXT PRIMARY KEY NOT NULL,
@@ -634,5 +640,143 @@ describe("runConsolidation — units", () => {
 			// It will return 0 processed because all runs fail.
 			expect(result.projectsProcessed).toBeGreaterThanOrEqual(0);
 		});
+	});
+});
+
+describe("buildSafeConsolidationPrompt", () => {
+	it("includes all sessions when under budget", () => {
+		const sessions = [
+			{ id: "sess-1", rawText: "User: hello 1" },
+			{ id: "sess-2", rawText: "User: hello 2" },
+		];
+		const memories = [{ topic: "general", content: "Existing memory" }];
+		const { prompt, includedSessionIds } = buildSafeConsolidationPrompt(sessions, memories, 10000);
+		expect(includedSessionIds).toHaveLength(2);
+		expect(includedSessionIds).toContain("sess-1");
+		expect(includedSessionIds).toContain("sess-2");
+		expect(prompt).toContain("User: hello 1");
+		expect(prompt).toContain("User: hello 2");
+	});
+
+	it("truncates older sessions and only reports included ones when over budget", () => {
+		const sessions = [
+			{ id: "sess-1", rawText: "User: hello 1 (very old)" },
+			{ id: "sess-2", rawText: "User: hello 2 (medium)" },
+			{ id: "sess-3", rawText: "User: hello 3 (newest)" },
+		];
+		const memories = [{ topic: "general", content: "Existing memory" }];
+		// Make budget tiny so only newest session fits
+		const { prompt, includedSessionIds } = buildSafeConsolidationPrompt(sessions, memories, 700);
+		expect(includedSessionIds).toHaveLength(1);
+		expect(includedSessionIds).toContain("sess-3");
+		expect(includedSessionIds).not.toContain("sess-1");
+		expect(prompt).toContain("User: hello 3");
+		expect(prompt).not.toContain("User: hello 1");
+	});
+});
+
+describe("safe consolidation run truncation updates", () => {
+	it("only updates consolidated status for sessions that actually fit in the budget", async () => {
+		const testDb = createTestDb();
+		// Seed 3 sessions with unique content
+		seedSessions(testDb.sqlite, "proj-safe-trunc", 1, { rawText: "User: old turn" }, "sess-old");
+		seedSessions(testDb.sqlite, "proj-safe-trunc", 1, { rawText: "User: mid turn" }, "sess-mid");
+		seedSessions(testDb.sqlite, "proj-safe-trunc", 1, { rawText: "User: new turn" }, "sess-new");
+
+		const result = await runConsolidation(
+			"proj-safe-trunc",
+			testDb.db,
+			{ FIREWORKS_API_KEY: "mock-key", FIREWORKS_MODEL: "test-model" },
+			makeMockExtractor(),
+			600, // tiny budget to force truncation
+		);
+
+		expect(result.error).toBeUndefined();
+		const sessRows = testDb.db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.projectId, "proj-safe-trunc"))
+			.all();
+		expect(sessRows).toHaveLength(3);
+
+		// The newest session should be consolidated (consolidated = 1, rawText = null)
+		const newSess = sessRows.find((s) => s.id.includes("sess-new"));
+		expect(newSess?.consolidated).toBe(1);
+		expect(newSess?.rawText).toBeNull();
+
+		// The oldest session should NOT be consolidated (consolidated = 0, rawText preserved)
+		const oldSess = sessRows.find((s) => s.id.includes("sess-old"));
+		expect(oldSess?.consolidated).toBe(0);
+		expect(oldSess?.rawText).toBe("User: old turn");
+	});
+});
+
+describe("database-level concurrency locking", () => {
+	it("sets and releases the database lock during consolidation", async () => {
+		const testDb = createTestDb();
+		seedSessions(testDb.sqlite, "proj-db-lock", 2);
+
+		let resolveExtractor!: (val: { facts: unknown[] }) => void;
+		const extractorPromise = new Promise((resolve) => {
+			resolveExtractor = resolve as (val: { facts: unknown[] }) => void;
+		});
+
+		const slowExtractor = async () => {
+			await extractorPromise;
+			return { facts: [] };
+		};
+
+		const runPromise = runConsolidation(
+			"proj-db-lock",
+			testDb.db,
+			{ FIREWORKS_API_KEY: "mock-key", FIREWORKS_MODEL: "test-model" },
+			slowExtractor,
+		);
+
+		// Let the event loop cycle so runConsolidation starts and acquires the lock
+		await new Promise((resolve) => setTimeout(resolve, 10));
+
+		// Verify the lock is active in the database
+		const project = testDb.db
+			.select()
+			.from(projects)
+			.where(eq(projects.id, "proj-db-lock"))
+			.get() as { id: string; consolidationInProgress: number | null };
+		expect(project.consolidationInProgress).toBe(1);
+
+		// Resolve extractor to let it finish
+		resolveExtractor?.({ facts: [] });
+		await runPromise;
+
+		// Verify the lock is released in the database
+		const projectAfter = testDb.db
+			.select()
+			.from(projects)
+			.where(eq(projects.id, "proj-db-lock"))
+			.get() as { id: string; consolidationInProgress: number | null };
+		expect(projectAfter.consolidationInProgress).toBe(0);
+	});
+
+	it("rejects consolidation if database lock is already held", async () => {
+		const testDb = createTestDb();
+		seedSessions(testDb.sqlite, "proj-db-lock-held", 2);
+
+		// Manually set lock in DB (simulating another isolate holding it)
+		testDb.db
+			.update(projects)
+			.set({ consolidationInProgress: 1 })
+			.where(eq(projects.id, "proj-db-lock-held"))
+			.run();
+
+		// Attempt consolidation
+		const result = await runConsolidation(
+			"proj-db-lock-held",
+			testDb.db,
+			{ FIREWORKS_API_KEY: "mock-key", FIREWORKS_MODEL: "test-model" },
+			makeMockExtractor(),
+		);
+
+		expect(result.consolidated).toBe(0);
+		expect(result.error).toBe("Consolidation already in progress");
 	});
 });

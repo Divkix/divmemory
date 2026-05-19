@@ -6,6 +6,7 @@ export const projects = sqliteTable("projects", {
 	sessionCount: integer("session_count").default(0),
 	createdAt: text("created_at"),
 	lastSeen: text("last_seen"),
+	consolidationInProgress: integer("consolidation_in_progress").default(0),
 });
 
 export const sessions = sqliteTable(

@@ -91,6 +91,11 @@ export function extractConversation(jsonlContent) {
 
 		if (!text.trim()) continue;
 
+		// Client-side content pruning: Truncate massive terminal output / diff dumps
+		if (text.length > 8000) {
+			text = `${text.slice(0, 4000)}\n\n[... Truncated ${text.length - 8000} characters of verbose content ...]\n\n${text.slice(-4000)}`;
+		}
+
 		if (currentRole === role) {
 			currentText += `\n${text}`;
 		} else {

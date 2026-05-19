@@ -796,6 +796,16 @@ describe("session-end hook", () => {
 			const conv = extractConversation(jsonl);
 			expect(conv).toBe("User: line 1\nline 2\n\nAssistant: reply");
 		});
+
+		it("truncates massive content over 8000 characters client-side", () => {
+			const hugeContent = "A".repeat(10000);
+			const jsonl = makeJsonl([{ role: "user", content: hugeContent }]);
+			const conv = extractConversation(jsonl);
+			expect(conv).toContain("[... Truncated 2000 characters of verbose content ...]");
+			expect(conv.length).toBeLessThan(10000);
+			expect(conv.startsWith("User: AAAA")).toBe(true);
+			expect(conv.endsWith("AAAA")).toBe(true);
+		});
 	});
 });
 

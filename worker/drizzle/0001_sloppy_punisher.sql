@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `consolidation_in_progress` integer DEFAULT 0;
