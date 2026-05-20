@@ -1,11 +1,14 @@
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
+import type { DbLike } from "../lib/db";
+import { runAtomic } from "../lib/db";
+import { jaccardSimilarity } from "../lib/utils";
 import { memories, projects, sessions } from "../schema";
 
-/* ───────── types ───────── */
+export type { DbLike } from "../lib/db";
+export { jaccardSimilarity, recoverJSON } from "../lib/utils";
 
-export type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
+/* ───────── types ───────── */
 
 export interface IngestBody {
 	session_id: string;
@@ -32,84 +35,9 @@ export interface ExtractionResult {
 	error?: string;
 }
 
-/* ───────── helpers: JSON recovery ───────── */
-
-export function recoverJSON(raw: string): Extracted | null {
-	if (!raw) return null;
-
-	// Stage 1: strip markdown fences and try clean JSON.parse
-	const trimmed = raw.replace(/^```json\s*/im, "").replace(/\s*```$/im, "");
-	try {
-		const parsed = JSON.parse(trimmed) as unknown;
-		if (isExtracted(parsed)) return parsed;
-	} catch {
-		/* continue */
-	}
-
-	// Stage 2: extract valid `{ ... }` objects from the raw text
-	const objects: unknown[] = [];
-	const re = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
-	let m: RegExpExecArray | null;
-	// biome-ignore lint/suspicious/noAssignInExpressions: safe loop
-	while ((m = re.exec(raw)) !== null) {
-		try {
-			const v = JSON.parse(m[0]) as unknown;
-			objects.push(v);
-		} catch {
-			/* skip malformed */
-		}
-	}
-
-	// Try wrapping objects into a facts array
-	if (objects.length > 0) {
-		return { facts: objects.filter(isFact) };
-	}
-
-	return null;
-}
-
-function isFact(v: unknown): v is Fact {
-	if (!v || typeof v !== "object") return false;
-	const f = v as Record<string, unknown>;
-	return (
-		typeof f.topic === "string" && typeof f.content === "string" && typeof f.confidence === "number"
-	);
-}
-
-function isExtracted(v: unknown): v is Extracted {
-	if (!v || typeof v !== "object") return false;
-	const e = v as Record<string, unknown>;
-	return Array.isArray(e.facts) && e.facts.every(isFact);
-}
-
-/* ───────── helpers: Jaccard similarity (token overlap) ───────── */
-
-function tokenize(text: string): Set<string> {
-	const words = text
-		.toLowerCase()
-		.replace(/[^a-z0-9\u4e00-\u9fff]+/g, " ") // keep CJK chars
-		.split(/\s+/)
-		.filter((w) => w.length > 0);
-	return new Set(words);
-}
-
-export function jaccardSimilarity(a: string, b: string): number {
-	if (!a.trim() || !b.trim()) return 0;
-	const sa = tokenize(a);
-	const sb = tokenize(b);
-	if (sa.size === 0 || sb.size === 0) return 0;
-	let intersection = 0;
-	for (const w of sa) {
-		if (sb.has(w)) intersection++;
-	}
-	const union = sa.size + sb.size - intersection;
-	return union === 0 ? 0 : intersection / union;
-}
+import { callFirepass, DEFAULT_FIREWORKS_MODEL, type FirepassResult } from "../lib/firepass";
 
 /* ───────── Firepass extraction ───────── */
-
-const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/routers/kimi-k2p6-turbo";
-const FIREPASS_TIMEOUT = 30000; // 30s
 
 const EXTRACTION_PROMPT = `You are a memory-extraction engine. Read the conversation below and extract concrete facts worth remembering across sessions (project context, decisions, issues, preferences, or general helpful info).
 
@@ -162,50 +90,11 @@ export function truncateConversationFromEnd(text: string, maxChars = 100_000): s
 export async function extractFacts(
 	rawText: string,
 	apiKey: string,
-	model = DEFAULT_FIREWORKS_MODEL,
+	model = "accounts/fireworks/routers/kimi-k2p6-turbo",
 ): Promise<ExtractionResult> {
-	if (!apiKey) {
-		return { extracted: { facts: [] }, rawResponse: null };
-	}
 	const prompt = EXTRACTION_PROMPT.replace("{CONVERSATION}", truncateConversationFromEnd(rawText));
-
-	try {
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), FIREPASS_TIMEOUT);
-		const res = await fetch("https://api.fireworks.ai/inference/v1/chat/completions", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify({
-				model,
-				messages: [{ role: "user", content: prompt }],
-				temperature: 0.1,
-				max_tokens: 4096,
-			}),
-			signal: controller.signal,
-		});
-		clearTimeout(timer);
-		if (!res.ok) {
-			const bodyText = await res.text();
-			return {
-				extracted: null,
-				rawResponse: bodyText,
-				error: `HTTP ${res.status}: ${res.statusText}`,
-			};
-		}
-		const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-		const raw = data.choices?.[0]?.message?.content ?? "";
-		const extracted = recoverJSON(raw);
-		return { extracted, rawResponse: raw };
-	} catch (err) {
-		return {
-			extracted: null,
-			rawResponse: null,
-			error: err instanceof Error ? err.message : String(err),
-		};
-	}
+	const result: FirepassResult = await callFirepass(prompt, apiKey, model);
+	return result as ExtractionResult;
 }
 
 /* ───────── helpers: fact processing ───────── */
@@ -283,35 +172,6 @@ async function dedupFacts(
 	}
 
 	return { factsToInsert, updates };
-}
-
-/* ───────── atomic DB writes helper ───────── */
-
-// D1: uses db.batch() for true atomicity (D1 auto-commit ignores raw BEGIN/COMMIT)
-// bun-sqlite: uses db.transaction() via Drizzle's SQLite transaction API
-async function runAtomic<T>(
-	db: DbLike,
-	fn: (dbOrTx: DbLike, addStmt: (q: { run: () => unknown }) => void) => Promise<T>,
-): Promise<T> {
-	// Detect D1 by presence of .batch() method
-	if ("batch" in db && typeof (db as unknown as { batch: unknown }).batch === "function") {
-		const stmts: Array<{ run: () => unknown }> = [];
-		const addStmt = (q: { run: () => unknown }) => stmts.push(q);
-		const result = await fn(db, addStmt);
-		if (stmts.length > 0) {
-			await (db as unknown as { batch: (batch: unknown[]) => Promise<unknown[]> }).batch(stmts);
-		}
-		return result;
-	}
-	// bun-sqlite: execute in Drizzle transaction; addStmt calls .run() immediately
-	return (
-		db as unknown as { transaction: <U>(fn: (tx: DbLike) => Promise<U>) => Promise<U> }
-	).transaction(async (tx) => {
-		const addStmt = (q: { run: () => unknown }) => {
-			q.run();
-		};
-		return await fn(tx, addStmt);
-	});
 }
 
 /* ───────── helpers: auto-consolidation trigger ───────── */

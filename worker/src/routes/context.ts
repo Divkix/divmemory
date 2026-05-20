@@ -1,19 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
+import { TOPIC_LABELS, TOPIC_ORDER } from "../lib/topics";
 import { memories, projects } from "../schema";
 
 /* ───────── types ───────── */
 
 type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
-
-const TOPIC_ORDER = [
-	{ key: "project_context", label: "Project Context" },
-	{ key: "decisions", label: "Recent Decisions" },
-	{ key: "issues", label: "Known Issues / Watch Out" },
-	{ key: "preferences", label: "Your Preferences" },
-	{ key: "general", label: "General" },
-];
 
 const DEFAULT_MAX_CHARS = 12000;
 const MIN_CHARS_PER_TOPIC = 500;
@@ -177,18 +170,20 @@ export function createContextRoute(app: any, db?: DbLike) {
 		// Build sections in consistent topic order
 		const sections: Array<{ label: string; text: string; factCount: number }> = [];
 		for (const t of TOPIC_ORDER) {
-			const facts = byTopic.get(t.key) || [];
+			const facts = byTopic.get(t) || [];
 			if (facts.length === 0) continue;
-			const text = formatTopicSection(t.label, facts);
-			sections.push({ label: t.label, text, factCount: facts.length });
+			const label = TOPIC_LABELS[t] || t;
+			const text = formatTopicSection(label, facts);
+			sections.push({ label, text, factCount: facts.length });
 		}
 
 		// Handle remaining topics not in TOPIC_ORDER (fallback)
 		for (const [topicKey, facts] of byTopic) {
-			if (TOPIC_ORDER.some((t) => t.key === topicKey)) continue;
+			if (TOPIC_ORDER.includes(topicKey)) continue;
 			if (facts.length === 0) continue;
-			const text = formatTopicSection(topicKey, facts);
-			sections.push({ label: topicKey, text, factCount: facts.length });
+			const label = TOPIC_LABELS[topicKey] || topicKey;
+			const text = formatTopicSection(label, facts);
+			sections.push({ label, text, factCount: facts.length });
 		}
 
 		let body: string;
