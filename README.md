@@ -4,22 +4,35 @@
 
 ## Architecture
 
-```
-┌─────────────┐     POST /ingest      ┌──────────────────┐
-│ Droid Plugin │ ─────────────────────→│  CF Worker (Hono) │
-│  hooks + CLI │ ←─── GET /context ────│  + Drizzle ORM    │
-└─────────────┘                       └────────┬─────────┘
-                                               │
-                                        ┌──────▼──────┐
-                                        │  Fireworks   │
-                                        │  Firepass    │
-                                        │  (extraction)│
-                                        └──────┬──────┘
-                                               │
-                                        ┌──────▼──────┐
-                                        │ Cloudflare D1│
-                                        │  (SQLite)    │
-                                        └─────────────┘
+```mermaid
+flowchart LR
+    subgraph Client["Client Machine"]
+        Plugin["Droid Plugin<br/>hooks + CLI"]
+        Cache["~/.divmemory/cache/&lt;project&gt;.txt"]
+        Queue["~/.divmemory/queue.jsonl"]
+    end
+
+    subgraph Worker["Cloudflare Worker"]
+        Hono["Hono + Drizzle ORM"]
+    end
+
+    subgraph Extraction["AI Extraction"]
+        Firepass["Fireworks Firepass"]
+    end
+
+    subgraph Database["Database"]
+        D1["Cloudflare D1<br/>(SQLite)"]
+    end
+
+    Plugin -->|"POST /ingest"| Hono
+    Hono -->|"GET /context"| Plugin
+    Plugin -.->|"print instantly"| Cache
+    Plugin -.->|"offline fallback"| Queue
+    Queue -.->|"retry later"| Hono
+
+    Hono -->|"extract facts"| Firepass
+    Firepass -->|"structured facts"| D1
+    Hono <--> D1
 ```
 
 **Hook flow**: SessionEnd → extract conversation → POST to Worker → Firepass fact extraction → D1 storage. If the Worker is offline, the hook writes to `~/.divmemory/queue.jsonl` and retries later. SessionStart → print `~/.divmemory/cache/<project>.txt` when present → refresh cache from `GET /context`.
