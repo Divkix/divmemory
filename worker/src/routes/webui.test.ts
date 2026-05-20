@@ -438,12 +438,9 @@ describe("Web UI — Main Page", () => {
 		});
 		const html = await res.text();
 		expect(html).toContain("Project Status");
-		expect(html).toContain("Active memories");
-		expect(html).toContain('<span class="value">1</span>'); // Curated/active memory count
-		expect(html).toContain("Pending extraction");
-		expect(html).toContain('<span class="value">1</span>'); // Pending session count
-		expect(html).toContain("Extraction errors");
-		expect(html).toContain('<span class="value">1</span>'); // Failed session count
+		expect(html).toMatch(/Active memories\s*<span class="value">1<\/span>/);
+		expect(html).toMatch(/Pending extraction\s*<span class="value">1<\/span>/);
+		expect(html).toMatch(/Extraction errors\s*<span class="value">1<\/span>/);
 	});
 
 	it("renders search form and filters visible memories by search query", async () => {
