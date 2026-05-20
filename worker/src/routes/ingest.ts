@@ -205,49 +205,40 @@ function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
 
 /* ───────── split atomic DB operations: pre-insert (session with raw_text) + post-extraction update ───────── */
 
-async function insertSessionAndProject(db: DbLike, body: IngestBody, now: string): Promise<void> {
+async function ensureProjectExists(db: DbLike, body: IngestBody, now: string): Promise<void> {
+	// Creates the project row if missing (for FK compliance). Does NOT
+	// increment sessionCount — that only happens after the session is
+	// confirmed as newly created (not a duplicate).
+	const projectId = body.project_id;
+	const existingProject = await db
+		.select({ id: projects.id })
+		.from(projects)
+		.where(eq(projects.id, projectId))
+		.get();
+	if (!existingProject) {
+		await db.insert(projects).values({
+			id: projectId,
+			name: body.project_name || projectId.split("/").pop() || projectId,
+			sessionCount: 0, // will be incremented when the session is actually inserted
+			createdAt: now,
+			lastSeen: now,
+		});
+	}
+}
+
+async function incrementProjectSessionCount(db: DbLike, body: IngestBody, now: string): Promise<void> {
+	// Increments sessionCount and updates lastSeen for an existing project.
+	// Only called AFTER the session insert confirmed this is a new session.
 	const projectId = body.project_id;
 	await runAtomic(db, async (tx, addStmt) => {
-		const existingProject = await tx
-			.select({ id: projects.id })
-			.from(projects)
-			.where(eq(projects.id, projectId))
-			.get();
-
-		if (existingProject) {
-			addStmt(
-				tx
-					.update(projects)
-					.set({
-						lastSeen: now,
-						sessionCount: sql`${projects.sessionCount} + 1`,
-					})
-					.where(eq(projects.id, projectId)),
-			);
-		} else {
-			addStmt(
-				tx.insert(projects).values({
-					id: projectId,
-					name: body.project_name || projectId.split("/").pop() || projectId,
-					sessionCount: 1,
-					createdAt: now,
-					lastSeen: now,
-				}),
-			);
-		}
-
 		addStmt(
-			tx.insert(sessions).values({
-				id: body.session_id,
-				projectId,
-				source: body.source || "droid",
-				rawText: body.conversation,
-				consolidated: 0,
-				extractionError: null,
-				tokenCount: body.conversation.length,
-				metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-				createdAt: now,
-			}),
+			tx
+				.update(projects)
+				.set({
+					lastSeen: now,
+					sessionCount: sql`${projects.sessionCount} + 1`,
+				})
+				.where(eq(projects.id, projectId)),
 		);
 	});
 }
@@ -360,30 +351,44 @@ export function createIngestRoute(
 
 		const now = new Date().toISOString();
 
-		// ── check duplicate session (read-only, outside transaction) ──
-		const existingSession = await dbCtx
-			.select()
-			.from(sessions)
-			.where(eq(sessions.id, body.session_id))
+		// ── ensure project exists for FK compliance (no sessionCount bump yet) ──
+		await ensureProjectExists(dbCtx, body, now);
+
+		// ── atomic session creation with duplicate detection ──
+		// INSERT with ON CONFLICT DO NOTHING is atomic at the SQL level, so
+		// concurrent requests for the same session_id cannot both win.
+		const created = await dbCtx
+			.insert(sessions)
+			.values({
+				id: body.session_id,
+				projectId: body.project_id,
+				source: body.source || "droid",
+				rawText: body.conversation,
+				consolidated: 0,
+				extractionError: null,
+				tokenCount: body.conversation.length,
+				metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+				createdAt: now,
+			})
+			.onConflictDoNothing()
+			.returning({ id: sessions.id })
 			.get();
-		if (existingSession) {
+		if (!created) {
 			return c.json(
 				{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
 				200,
 			);
 		}
 
-		// ── unified atomic transaction: project upsert + session insert + fact extraction + persist ──
+		// ── unified atomic transaction: fact extraction + persist ──
 		const env = opts?.getEnv ? opts.getEnv(c) : {};
 		const fwKey = env.FIREWORKS_API_KEY ?? "";
 		const fwModel = env.FIREWORKS_MODEL ?? DEFAULT_FIREWORKS_MODEL;
 
 		const doIngest = async () => {
 			try {
-				// Step 1: Insert project + session row with raw_text BEFORE extraction
-				// This ensures crash recovery: if Worker crashes mid-extraction,
-				// consolidation can pick up sessions with raw_text but no facts.
-				await insertSessionAndProject(dbCtx, body, now);
+				// Step 1: Bump project session count (only after new session confirmed)
+				await incrementProjectSessionCount(dbCtx, body, now);
 
 				// Step 2: Firepass extraction (network call, outside DB transaction)
 				const result = await extractFacts(body.conversation, fwKey, fwModel);

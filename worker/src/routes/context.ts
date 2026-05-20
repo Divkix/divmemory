@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
-import { TOPIC_LABELS, TOPIC_ORDER } from "../lib/topics";
+import { TOPIC_LABELS, TOPIC_ORDER, type TopicId } from "../lib/topics";
 import { memories, projects } from "../schema";
 
 /* ───────── types ───────── */
@@ -179,9 +179,9 @@ export function createContextRoute(app: any, db?: DbLike) {
 
 		// Handle remaining topics not in TOPIC_ORDER (fallback)
 		for (const [topicKey, facts] of byTopic) {
-			if (TOPIC_ORDER.includes(topicKey)) continue;
+			if (TOPIC_ORDER.includes(topicKey as TopicId)) continue;
 			if (facts.length === 0) continue;
-			const label = TOPIC_LABELS[topicKey] || topicKey;
+			const label = TOPIC_LABELS[topicKey as TopicId] || topicKey;
 			const text = formatTopicSection(label, facts);
 			sections.push({ label, text, factCount: facts.length });
 		}

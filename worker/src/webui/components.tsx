@@ -1,11 +1,11 @@
 /** @jsxImportSource hono/jsx */
 import type { FC, PropsWithChildren } from "hono/jsx";
-import { TOPIC_LABELS, TOPIC_ORDER, VALID_TOPICS } from "../lib/topics";
+import { TOPIC_LABELS, TOPIC_ORDER, type TopicId, VALID_TOPICS } from "../lib/topics";
 import { GLOBAL_CSS } from "./styles";
 import type { MemoryRow, SessionRow } from "./types";
 
 export function topicLabel(topic: string | null): string {
-	return TOPIC_LABELS[topic || "general"] || "General";
+	return TOPIC_LABELS[(topic || "general") as TopicId] || "General";
 }
 
 export function confidencePercent(confidence: number | null): string {
@@ -224,7 +224,7 @@ export const TopicGroup: FC<{
 	if (!memories.length) return null;
 	return (
 		<div class="topic-group">
-			<h3>{TOPIC_LABELS[topic] || topic}</h3>
+			<h3>{TOPIC_LABELS[topic as TopicId] || topic}</h3>
 			{memories.map((m) => {
 				const isEditing = m.id === editId && !isArchivedView;
 				const isDeleting = m.id === deleteId && !isArchivedView;
@@ -394,7 +394,7 @@ export const MainPage: FC<{
 					isArchivedView={showArchived}
 				/>
 			));
-			const extraTopics = Object.keys(grouped).filter((k) => !TOPIC_ORDER.includes(k));
+			const extraTopics = Object.keys(grouped).filter((k) => !TOPIC_ORDER.includes(k as TopicId));
 			for (const t of extraTopics) {
 				topicFrags.push(
 					<TopicGroup
