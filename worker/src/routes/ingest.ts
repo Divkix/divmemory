@@ -35,7 +35,7 @@ export interface ExtractionResult {
 	error?: string;
 }
 
-import { callFirepass, DEFAULT_FIREWORKS_MODEL, type FirepassResult } from "../lib/firepass";
+import { callFirepass, DEFAULT_FIREWORKS_MODEL } from "../lib/firepass";
 
 /* ───────── Firepass extraction ───────── */
 
