@@ -45,33 +45,36 @@ export async function callFirepass(
 	try {
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), timeout);
-		const res = await fetch(FIREPASS_ENDPOINT, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify({
-				model,
-				messages: [{ role: "user", content: prompt }],
-				temperature: 0.1,
-				max_tokens: 4096,
-			}),
-			signal: controller.signal,
-		});
-		clearTimeout(timer);
-		if (!res.ok) {
-			const bodyText = await res.text();
-			return {
-				extracted: null,
-				rawResponse: bodyText,
-				error: `HTTP ${res.status}: ${res.statusText}`,
-			};
+		try {
+			const res = await fetch(FIREPASS_ENDPOINT, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({
+					model,
+					messages: [{ role: "user", content: prompt }],
+					temperature: 0.1,
+					max_tokens: 4096,
+				}),
+				signal: controller.signal,
+			});
+			if (!res.ok) {
+				const bodyText = await res.text();
+				return {
+					extracted: null,
+					rawResponse: bodyText,
+					error: `HTTP ${res.status}: ${res.statusText}`,
+				};
+			}
+			const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+			const raw = data.choices?.[0]?.message?.content ?? "";
+			const extracted = recoverJSON(raw);
+			return { extracted, rawResponse: raw };
+		} finally {
+			clearTimeout(timer);
 		}
-		const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-		const raw = data.choices?.[0]?.message?.content ?? "";
-		const extracted = recoverJSON(raw);
-		return { extracted, rawResponse: raw };
 	} catch (err) {
 		return {
 			extracted: null,

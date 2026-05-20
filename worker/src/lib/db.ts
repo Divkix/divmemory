@@ -22,13 +22,16 @@ export async function runAtomic<T>(
 		}
 		return result;
 	}
-	// bun-sqlite: execute in Drizzle transaction; addStmt calls .run() immediately
+	// bun-sqlite: execute in Drizzle transaction; defer all statements, then run in order
 	return (
 		db as unknown as { transaction: <U>(fn: (tx: DbLike) => Promise<U>) => Promise<U> }
 	).transaction(async (tx) => {
-		const addStmt = (q: { run: () => unknown }) => {
-			q.run();
-		};
-		return await fn(tx, addStmt);
+		const stmts: Array<{ run: () => unknown }> = [];
+		const addStmt = (q: { run: () => unknown }) => stmts.push(q);
+		const result = await fn(tx, addStmt);
+		for (const q of stmts) {
+			await q.run();
+		}
+		return result;
 	});
 }

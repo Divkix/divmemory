@@ -128,11 +128,11 @@ async function dedupFacts(
 	factsToInsert: Fact[];
 	updates: Array<{ id: string; content?: string; confidence: number }>;
 }> {
-	const existing = db
+	const existing = (await db
 		.select()
 		.from(memories)
 		.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-		.all() as Array<{
+		.all()) as Array<{
 		id: string;
 		content: string;
 		confidence: number;
@@ -190,12 +190,12 @@ let consolidationTrigger: (projectId: string, db: DbLike, c: unknown) => void | 
 	// default no-op — real trigger wired by the consolidation feature
 };
 
-function unconsolidatedCount(projectId: string, db: DbLike): number {
-	const row = db
+async function unconsolidatedCount(projectId: string, db: DbLike): Promise<number> {
+	const row = (await db
 		.select({ count: sql<number>`count(*)` })
 		.from(sessions)
 		.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, 0)))
-		.get() as { count: number } | undefined;
+		.get()) as { count: number } | undefined;
 	return row?.count ?? 0;
 }
 
@@ -208,7 +208,7 @@ function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
 async function insertSessionAndProject(db: DbLike, body: IngestBody, now: string): Promise<void> {
 	const projectId = body.project_id;
 	await runAtomic(db, async (tx, addStmt) => {
-		const existingProject = tx
+		const existingProject = await tx
 			.select({ id: projects.id })
 			.from(projects)
 			.where(eq(projects.id, projectId))
@@ -361,7 +361,7 @@ export function createIngestRoute(
 		const now = new Date().toISOString();
 
 		// ── check duplicate session (read-only, outside transaction) ──
-		const existingSession = dbCtx
+		const existingSession = await dbCtx
 			.select()
 			.from(sessions)
 			.where(eq(sessions.id, body.session_id))
@@ -392,7 +392,7 @@ export function createIngestRoute(
 				const factsWritten = await processExtractionAfter(dbCtx, body, result, now);
 
 				// ── auto-consolidation trigger (outside atomic tx) ──
-				const unconsol = unconsolidatedCount(body.project_id, dbCtx);
+				const unconsol = await unconsolidatedCount(body.project_id, dbCtx);
 				if (unconsol >= 5) {
 					triggerConsolidation(body.project_id, dbCtx, c);
 				}

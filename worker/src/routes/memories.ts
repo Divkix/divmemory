@@ -80,7 +80,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 
 		// Atomic: project upsert → session insert → memory insert
 		await runAtomic(dbCtx, async (tx, addStmt) => {
-			const project = tx.select().from(projects).where(eq(projects.id, projectId)).get() as
+			const project = (await tx.select().from(projects).where(eq(projects.id, projectId)).get()) as
 				| { id: string }
 				| undefined;
 			if (project) {

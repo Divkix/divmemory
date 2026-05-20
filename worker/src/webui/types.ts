@@ -1,6 +1,4 @@
-import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
-
-export type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
+export type { DbLike } from "../lib/db";
 
 export interface MemoryRow {
 	id: string;

@@ -12,14 +12,16 @@ export const TOPICS: readonly TopicDef[] = [
 	{ id: "general", label: "General", order: 4 },
 ] as const;
 
-export const VALID_TOPICS = TOPICS.map((t) => t.id);
+export type TopicId = (typeof TOPICS)[number]["id"];
 
-export const TOPIC_ORDER = TOPICS.map((t) => t.id);
+export const VALID_TOPICS: readonly TopicId[] = TOPICS.map((t) => t.id);
 
-export const TOPIC_LABELS: Record<string, string> = Object.fromEntries(
+export const TOPIC_ORDER: readonly TopicId[] = TOPICS.map((t) => t.id);
+
+export const TOPIC_LABELS: Record<TopicId, string> = Object.fromEntries(
 	TOPICS.map((t) => [t.id, t.label]),
-);
+) as Record<TopicId, string>;
 
-export function isValidTopic(topic: string): topic is TopicDef["id"] {
-	return VALID_TOPICS.includes(topic as TopicDef["id"]);
+export function isValidTopic(topic: string): topic is TopicId {
+	return VALID_TOPICS.includes(topic as TopicId);
 }

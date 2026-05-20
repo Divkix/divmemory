@@ -34,6 +34,17 @@ async function seedMemories(
 		updatedAt?: string;
 	}>,
 ) {
+	// upsert project first (sessions FK references projects.id)
+	db.insert(projects)
+		.values({
+			id: projectId,
+			name: projectId.split("/").pop() || projectId,
+			sessionCount: 1,
+			createdAt: new Date().toISOString(),
+			lastSeen: new Date().toISOString(),
+		})
+		.run();
+
 	const sessionId = crypto.randomUUID();
 	db.insert(sessions)
 		.values({
@@ -62,16 +73,6 @@ async function seedMemories(
 			})
 			.run();
 	}
-	// upsert project
-	db.insert(projects)
-		.values({
-			id: projectId,
-			name: projectId.split("/").pop() || projectId,
-			sessionCount: 1,
-			createdAt: new Date().toISOString(),
-			lastSeen: new Date().toISOString(),
-		})
-		.run();
 }
 
 /* ───── helpers ───── */

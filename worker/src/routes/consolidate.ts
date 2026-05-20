@@ -250,7 +250,7 @@ export async function runConsolidation(
 					tx.insert(memories).values({
 						id: crypto.randomUUID(),
 						projectId,
-						sourceSession: allSessions[0]?.id ?? crypto.randomUUID(),
+						sourceSession: includedSessionIds[0] ?? crypto.randomUUID(),
 						topic: f.topic,
 						content: f.content,
 						confidence: f.confidence,

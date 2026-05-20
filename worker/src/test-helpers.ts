@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
  *  Creates all tables, indexes, and returns the raw sqlite handle + drizzle db. */
 export function createTestDb() {
 	const sqlite = new Database(":memory:");
+	sqlite.exec("PRAGMA foreign_keys = ON;");
 	const db = drizzle(sqlite);
 	sqlite.exec(`
 		CREATE TABLE projects (

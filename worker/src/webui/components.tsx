@@ -394,6 +394,20 @@ export const MainPage: FC<{
 					isArchivedView={showArchived}
 				/>
 			));
+			const extraTopics = Object.keys(grouped).filter((k) => !TOPIC_ORDER.includes(k));
+			for (const t of extraTopics) {
+				topicFrags.push(
+					<TopicGroup
+						topic={t}
+						memories={grouped[t]}
+						pid={pid}
+						csrfValue={csrfValue}
+						editId={editId}
+						deleteId={deleteId}
+						isArchivedView={showArchived}
+					/>,
+				);
+			}
 
 			const archivedToggle = showArchived ? (
 				<div class="archived-toggle">
