@@ -42,7 +42,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		if (!isValidTopic(topic)) {
 			return c.json(
 				{
-					error: `Invalid topic '${topic}'. Valid topics: project_context, decisions, issues, preferences, general`,
+					error: `Invalid topic '${topic}'. Valid topics: ${VALID_TOPICS.join(", ")}`,
 				},
 				400,
 			);

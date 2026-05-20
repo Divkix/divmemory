@@ -38,7 +38,8 @@ export function recoverJSON(raw: string): Extracted | null {
 
 	// Try wrapping objects into a facts array
 	if (objects.length > 0) {
-		return { facts: objects.filter(isFact) };
+		const facts = objects.filter(isFact);
+		return facts.length > 0 ? { facts } : null;
 	}
 
 	return null;

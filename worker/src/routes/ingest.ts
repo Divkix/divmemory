@@ -90,11 +90,15 @@ export function truncateConversationFromEnd(text: string, maxChars = 100_000): s
 export async function extractFacts(
 	rawText: string,
 	apiKey: string,
-	model = "accounts/fireworks/routers/kimi-k2p6-turbo",
+	model = DEFAULT_FIREWORKS_MODEL,
 ): Promise<ExtractionResult> {
 	const prompt = EXTRACTION_PROMPT.replace("{CONVERSATION}", truncateConversationFromEnd(rawText));
-	const result: FirepassResult = await callFirepass(prompt, apiKey, model);
-	return result as ExtractionResult;
+	const result = await callFirepass(prompt, apiKey, model);
+	return {
+		extracted: result.extracted,
+		rawResponse: result.rawResponse,
+		error: result.error,
+	};
 }
 
 /* ───────── helpers: fact processing ───────── */
