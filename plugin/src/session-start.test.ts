@@ -287,7 +287,7 @@ describe("session-start hook", () => {
 
 		it("exits 0 when DIVMEMORY_API_KEY is missing — error to stderr (VAL-PLUGIN-050)", async () => {
 			const stdin = makeStdin();
-			process.env.DIVMEMORY_API_KEY = undefined;
+			delete process.env.DIVMEMORY_API_KEY;
 			const fetchFn = mockFetch();
 			const result = await processSessionStart(stdin, {
 				fetch: fetchFn,
@@ -328,7 +328,7 @@ describe("session-start hook", () => {
 		it("uses default worker URL when DIVMEMORY_WORKER_URL unset (VAL-PLUGIN-057)", async () => {
 			const stdin = makeStdin();
 			process.env.DIVMEMORY_API_KEY = "test-key";
-			process.env.DIVMEMORY_WORKER_URL = undefined;
+			delete process.env.DIVMEMORY_WORKER_URL;
 			const fetchFn = mockFetch();
 			await processSessionStart(stdin, {
 				fetch: fetchFn,

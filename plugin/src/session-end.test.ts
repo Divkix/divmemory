@@ -646,7 +646,7 @@ describe("session-end hook", () => {
 				"utf-8",
 			);
 			process.env.DIVMEMORY_API_KEY = "test-key";
-			process.env.DIVMEMORY_WORKER_URL = undefined;
+			delete process.env.DIVMEMORY_WORKER_URL;
 			const fetchFn = mockFetch();
 			await processSessionEnd(stdin, {
 				fetch: fetchFn,
@@ -694,7 +694,7 @@ describe("session-end hook", () => {
 				makeJsonl([{ role: "user", content: "hi" }]),
 				"utf-8",
 			);
-			process.env.DIVMEMORY_API_KEY = undefined;
+			delete process.env.DIVMEMORY_API_KEY;
 			const fetchFn = mockFetch();
 			const result = await processSessionEnd(stdin, {
 				fetch: fetchFn,
