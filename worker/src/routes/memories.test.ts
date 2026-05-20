@@ -1,10 +1,10 @@
-import { Database } from "bun:sqlite";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/bun-sqlite";
+import type { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth, hybridAuth } from "../auth";
 import { memories } from "../schema";
+import { createTestDb } from "../test-helpers";
 import { createMemoriesRoute } from "./memories";
 
 const TEST_API_KEY = "test-api-key-123";
@@ -12,51 +12,6 @@ const TEST_PASSWORD = "test-web-password-456";
 const COOKIE_SECRET = "test-cookie-secret-789";
 
 /* ───────── helpers ───────── */
-
-function createTestDb() {
-	const sqlite = new Database(":memory:");
-	const db = drizzle(sqlite);
-	sqlite.exec(`
-		CREATE TABLE projects (
-			id TEXT PRIMARY KEY NOT NULL,
-			name TEXT,
-			session_count INTEGER DEFAULT 0,
-			created_at TEXT,
-			last_seen TEXT,
-			consolidation_in_progress INTEGER DEFAULT 0
-		);
-		CREATE TABLE sessions (
-			id TEXT PRIMARY KEY NOT NULL,
-			project_id TEXT NOT NULL,
-			source TEXT,
-			raw_text TEXT,
-			consolidated INTEGER DEFAULT 0,
-			extraction_error TEXT,
-			token_count INTEGER,
-			metadata TEXT,
-			created_at TEXT,
-			FOREIGN KEY (project_id) REFERENCES projects(id)
-		);
-		CREATE INDEX idx_sessions_project_id ON sessions (project_id);
-		CREATE INDEX idx_sessions_project_id_consolidated ON sessions (project_id, consolidated);
-		CREATE TABLE memories (
-			id TEXT PRIMARY KEY NOT NULL,
-			project_id TEXT NOT NULL,
-			source_session TEXT NOT NULL,
-			topic TEXT,
-			content TEXT,
-			confidence REAL DEFAULT 0,
-			curated INTEGER DEFAULT 0,
-			status TEXT DEFAULT 'active',
-			created_at TEXT,
-			updated_at TEXT,
-			FOREIGN KEY (source_session) REFERENCES sessions(id)
-		);
-		CREATE INDEX idx_memories_project_id_topic ON memories (project_id, topic);
-		CREATE INDEX idx_memories_project_id_status ON memories (project_id, status);
-	`);
-	return { sqlite, db };
-}
 
 function createMemoriesApp(db: ReturnType<typeof drizzle>) {
 	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();

@@ -1,14 +1,10 @@
 import { and, desc, eq, like, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
+import type { DbLike } from "../lib/db";
+import { runAtomic } from "../lib/db";
+import { isValidTopic, VALID_TOPICS } from "../lib/topics";
+import { jaccardSimilarity } from "../lib/utils";
 import { memories, projects, sessions } from "../schema";
-import { jaccardSimilarity } from "./ingest";
-
-/* ───────── types ───────── */
-
-type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
-
-const VALID_TOPICS = ["project_context", "decisions", "issues", "preferences", "general"] as const;
 
 /* ───────── helpers ───────── */
 
@@ -18,10 +14,6 @@ function getDb(c: { env: { DB: D1Database } }) {
 
 function nowISO(): string {
 	return new Date().toISOString();
-}
-
-function isValidTopic(topic: string): topic is (typeof VALID_TOPICS)[number] {
-	return VALID_TOPICS.includes(topic as (typeof VALID_TOPICS)[number]);
 }
 
 /* ───────── route ───────── */
@@ -58,6 +50,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 
 		const now = nowISO();
 		const projectId = body.project_id;
+		const content = body.content as string;
 
 		const existingRows = (await dbCtx
 			.select()
@@ -85,54 +78,52 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const memoryId = crypto.randomUUID();
 		const sessionId = `manual:${memoryId}`;
 
-		const project = (await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get()) as
-			| { id: string }
-			| undefined;
-		if (project) {
-			await dbCtx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)).run();
-		} else {
-			await dbCtx
-				.insert(projects)
-				.values({
-					id: projectId,
-					name: body.project_name || projectId.split("/").pop() || projectId,
-					sessionCount: 0,
+		// Atomic: project upsert → session insert → memory insert
+		await runAtomic(dbCtx, async (tx, addStmt) => {
+			const project = (await tx.select().from(projects).where(eq(projects.id, projectId)).get()) as
+				| { id: string }
+				| undefined;
+			if (project) {
+				addStmt(tx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)));
+			} else {
+				addStmt(
+					tx.insert(projects).values({
+						id: projectId,
+						name: body.project_name || projectId.split("/").pop() || projectId,
+						sessionCount: 0,
+						createdAt: now,
+						lastSeen: now,
+					}),
+				);
+			}
+			addStmt(
+				tx.insert(sessions).values({
+					id: sessionId,
+					projectId,
+					source: "manual-add",
+					rawText: content,
+					consolidated: 1,
+					extractionError: null,
+					tokenCount: content.length,
+					metadata: JSON.stringify({ manual: true }),
 					createdAt: now,
-					lastSeen: now,
-				})
-				.run();
-		}
-
-		await dbCtx
-			.insert(sessions)
-			.values({
-				id: sessionId,
-				projectId,
-				source: "manual-add",
-				rawText: body.content,
-				consolidated: 1,
-				extractionError: null,
-				tokenCount: body.content.length,
-				metadata: JSON.stringify({ manual: true }),
-				createdAt: now,
-			})
-			.run();
-
-		await dbCtx
-			.insert(memories)
-			.values({
-				id: memoryId,
-				projectId,
-				sourceSession: sessionId,
-				topic,
-				content: body.content.trim(),
-				confidence: 1,
-				curated: 1,
-				status: "active",
-				createdAt: now,
-				updatedAt: now,
-			})
-			.run();
+				}),
+			);
+			addStmt(
+				tx.insert(memories).values({
+					id: memoryId,
+					projectId,
+					sourceSession: sessionId,
+					topic,
+					content: content.trim(),
+					confidence: 1,
+					curated: 1,
+					status: "active",
+					createdAt: now,
+					updatedAt: now,
+				}),
+			);
+		});
 
 		return c.json({ ok: true, id: memoryId, curated: 1, confidence: 1, topic }, 201);
 	});

@@ -1,7 +1,9 @@
 import { and, eq, sql } from "drizzle-orm";
+import type { DbLike } from "../lib/db";
+import { runAtomic } from "../lib/db";
+import { callFirepass } from "../lib/firepass";
+import { jaccardSimilarity } from "../lib/utils";
 import { memories, projects, sessions } from "../schema";
-import type { DbLike } from "./ingest";
-import { jaccardSimilarity, recoverJSON } from "./ingest";
 
 /* ───────── types ───────── */
 
@@ -15,10 +17,10 @@ interface Extracted {
 	facts: Fact[];
 }
 
+import { DEFAULT_FIREWORKS_MODEL } from "../lib/firepass";
+
 /* ───────── constants ───────── */
 
-const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/routers/kimi-k2p6-turbo";
-const FIREPASS_TIMEOUT = 30000; // 30s
 const MAX_PROMPT_CHARS = 120_000; // hard cap to avoid Worker crash
 
 const CONSOLIDATION_PROMPT = `You are a memory consolidation engine. Read the existing memories and new session conversations below, then produce a clean, consolidated set of facts for this project.
@@ -47,41 +49,6 @@ const inFlight = new Map<string, boolean>();
 
 export function isConsolidationInFlight(projectId: string): boolean {
 	return inFlight.get(projectId) ?? false;
-}
-
-/* ───────── Firepass helper ───────── */
-
-async function callFirepass(
-	prompt: string,
-	apiKey: string,
-	model: string,
-): Promise<Extracted | null> {
-	if (!apiKey) return null;
-	try {
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), FIREPASS_TIMEOUT);
-		const res = await fetch("https://api.fireworks.ai/inference/v1/chat/completions", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-			},
-			body: JSON.stringify({
-				model,
-				messages: [{ role: "user", content: prompt.slice(0, MAX_PROMPT_CHARS) }],
-				temperature: 0.1,
-				max_tokens: 4096,
-			}),
-			signal: controller.signal,
-		});
-		clearTimeout(timer);
-		if (!res.ok) return null;
-		const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-		const raw = data.choices?.[0]?.message?.content ?? "";
-		return recoverJSON(raw);
-	} catch {
-		return null;
-	}
 }
 
 interface BuildPromptResult {
@@ -223,87 +190,89 @@ export async function runConsolidation(
 		/* 4. Call Firepass */
 		const extracted = extractor
 			? await extractor(prompt, apiKey, model)
-			: await callFirepass(prompt, apiKey, model);
+			: (await callFirepass(prompt, apiKey, model)).extracted;
 
 		if (!extracted) {
 			// Firepass failure: leave sessions unchanged (pending stay 0, error stay -1)
 			return { consolidated: 0, archived: 0, error: "Firepass consolidation failed" };
 		}
 
-		/* 5. Dedup and merge consolidated facts */
-		const factsToInsert: Fact[] = [];
-		const updates: Array<{ id: string; content?: string; confidence: number }> = [];
+		/* 5. Dedup and merge consolidated facts, then mark sessions (all atomic) */
+		await runAtomic(db, async (tx, addStmt) => {
+			const factsToInsert: Fact[] = [];
+			const updates: Array<{ id: string; content?: string; confidence: number }> = [];
 
-		for (const fact of extracted.facts.filter((f) => f.confidence >= 0.7)) {
-			let matched = false;
-			for (const mem of existingMemories) {
-				if (jaccardSimilarity(fact.content, mem.content ?? "") > 0.6) {
-					matched = true;
-					if (mem.curated === 1) {
-						// Corroboration refresh: update curated fact's updated_at
-						await db.update(memories).set({ updatedAt: now }).where(eq(memories.id, mem.id)).run();
+			for (const fact of extracted.facts.filter((f) => f.confidence >= 0.7)) {
+				let matched = false;
+				for (const mem of existingMemories) {
+					if (jaccardSimilarity(fact.content, mem.content ?? "") > 0.6) {
+						matched = true;
+						if (mem.curated === 1) {
+							// Corroboration refresh: update curated fact's updated_at (in-batch call)
+							addStmt(tx.update(memories).set({ updatedAt: now }).where(eq(memories.id, mem.id)));
+							break;
+						}
+						if (fact.confidence > mem.confidence) {
+							updates.push({
+								id: mem.id,
+								content: fact.content,
+								confidence: fact.confidence,
+							});
+						} else {
+							updates.push({
+								id: mem.id,
+								confidence: mem.confidence,
+							});
+						}
 						break;
 					}
-					if (fact.confidence > mem.confidence) {
-						updates.push({
-							id: mem.id,
-							content: fact.content,
-							confidence: fact.confidence,
-						});
-					} else {
-						updates.push({
-							id: mem.id,
-							confidence: mem.confidence,
-						});
-					}
-					break;
+				}
+				if (!matched) {
+					factsToInsert.push(fact);
 				}
 			}
-			if (!matched) {
-				factsToInsert.push(fact);
+
+			for (const u of updates) {
+				addStmt(
+					tx
+						.update(memories)
+						.set({
+							updatedAt: now,
+							...(u.content !== undefined ? { content: u.content } : {}),
+							confidence: u.confidence,
+						})
+						.where(eq(memories.id, u.id)),
+				);
 			}
-		}
 
-		for (const u of updates) {
-			await db
-				.update(memories)
-				.set({
-					updatedAt: now,
-					...(u.content !== undefined ? { content: u.content } : {}),
-					confidence: u.confidence,
-				})
-				.where(eq(memories.id, u.id))
-				.run();
-		}
-
-		for (const f of factsToInsert) {
-			await db
-				.insert(memories)
-				.values({
-					id: crypto.randomUUID(),
-					projectId,
-					sourceSession: allSessions[0]?.id ?? crypto.randomUUID(),
-					topic: f.topic,
-					content: f.content,
-					confidence: f.confidence,
-					curated: 0,
-					status: "active",
-					createdAt: now,
-					updatedAt: now,
-				})
-				.run();
-		}
-
-		/* 6. Mark sessions as consolidated and prune raw_text */
-		for (const s of allSessions) {
-			if (includedSessionIds.includes(s.id)) {
-				await db
-					.update(sessions)
-					.set({ consolidated: 1, rawText: null, extractionError: null })
-					.where(eq(sessions.id, s.id))
-					.run();
+			for (const f of factsToInsert) {
+				addStmt(
+					tx.insert(memories).values({
+						id: crypto.randomUUID(),
+						projectId,
+						sourceSession: includedSessionIds[0] ?? crypto.randomUUID(),
+						topic: f.topic,
+						content: f.content,
+						confidence: f.confidence,
+						curated: 0,
+						status: "active",
+						createdAt: now,
+						updatedAt: now,
+					}),
+				);
 			}
-		}
+
+			for (const s of allSessions) {
+				if (includedSessionIds.includes(s.id)) {
+					addStmt(
+						tx
+							.update(sessions)
+							.set({ consolidated: 1, rawText: null, extractionError: null })
+							.where(eq(sessions.id, s.id)),
+					);
+				}
+			}
+		});
 
 		return { consolidated: includedSessionIds.length, archived: 0 };
 	} finally {
