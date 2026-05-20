@@ -1,7 +1,7 @@
 {
 	"name": "divmemory",
 	"description": "Persistent cross-session memory for Droid",
-	"version": "0.1.0",
+	"version": "1.0.0",
 	"author": "divkix",
 	"entry": "src/index.ts",
 	"hooks": "hooks.json",

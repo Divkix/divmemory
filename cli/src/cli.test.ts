@@ -457,14 +457,14 @@ describe("bootstrap cli", () => {
 			expect(id).toBe("github.com/divkix/my-app");
 		});
 
-		it("falls back to directory basename when no git remote", async () => {
+		it("falls back to a hashed absolute path slug when no git remote", async () => {
 			const mod = await loadCliModule();
 			const { getProjectId } = mod;
 			if (!getProjectId) return;
 			const noGitDir = join(tmpDir, "no-git");
 			mkdirSync(noGitDir);
 			const id = await getProjectId(noGitDir);
-			expect(id).toBe("no-git");
+			expect(id).toMatch(/^local-[a-f0-9]{12}-no-git$/);
 		});
 
 		it("normalizes SSH git remote", async () => {
@@ -1041,12 +1041,12 @@ describe("bootstrap cli", () => {
 			expect(getSessionIdFromFilename("my-session.jsonl")).toBe("my-session");
 		});
 
-		it("project_name from git remote or directory basename", async () => {
+		it("project_name from git remote or hashed local slug", async () => {
 			const mod = await loadCliModule();
 			const { getProjectName } = mod;
 			if (!getProjectName) return;
 			expect(getProjectName("github.com/divkix/my-app")).toBe("my-app");
-			expect(getProjectName("my-app")).toBe("my-app");
+			expect(getProjectName("local-123456abcdef-my-app")).toBe("my-app");
 		});
 
 		it("session directly in root dir uses basename fallback (VAL-CLI-024)", async () => {

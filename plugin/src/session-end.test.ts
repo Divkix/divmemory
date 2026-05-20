@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ describe("session-end hook", () => {
 		originalEnv = {
 			DIVMEMORY_API_KEY: process.env.DIVMEMORY_API_KEY,
 			DIVMEMORY_WORKER_URL: process.env.DIVMEMORY_WORKER_URL,
+			DIVMEMORY_HOME: process.env.DIVMEMORY_HOME,
 		};
 		capturedStderr = [];
 		capturedStdout = [];
@@ -188,7 +189,7 @@ describe("session-end hook", () => {
 
 	// ============================================================
 	// VAL-PLUGIN-002: Extracts project ID from git remote
-	// VAL-PLUGIN-003: Falls back to basename(cwd)
+	// VAL-PLUGIN-003: Falls back to hashed absolute-path slug
 	// VAL-PLUGIN-004: Handles git remote URL in various formats
 	// VAL-PLUGIN-036: Git command not found
 	// VAL-PLUGIN-104: Case normalization
@@ -205,12 +206,12 @@ describe("session-end hook", () => {
 			expect(id).toBe("github.com/divkix/my-app");
 		});
 
-		it("falls back to basename(cwd) when no git remote (VAL-PLUGIN-003)", async () => {
+		it("falls back to a hashed absolute path slug when no git remote", async () => {
 			const noGitDir = join(tmpDir, "no-git");
 			const { mkdirSync } = await import("node:fs");
 			mkdirSync(noGitDir, { recursive: true });
 			const id = await getProjectId(noGitDir);
-			expect(id).toBe("no-git");
+			expect(id).toMatch(/^local-[a-f0-9]{12}-no-git$/);
 		});
 
 		it("normalizes HTTPS git remote URL (VAL-PLUGIN-004)", async () => {
@@ -481,6 +482,63 @@ describe("session-end hook", () => {
 			expect((fetchCalls[0].body as Record<string, string>).source).toBe("droid");
 		});
 
+		it("queues ingestion payload locally when the Worker is unreachable", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const stdin = makeStdin();
+			writeFileSync(join(tmpDir, "test.jsonl"), makeJsonl([{ role: "user", content: "hello" }]));
+			const fetchFn = () => Promise.reject(new Error("offline"));
+
+			const result = await processSessionEnd(stdin, {
+				fetch: fetchFn,
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			const queuePath = join(tmpDir, "queue.jsonl");
+			expect(result.exitCode).toBe(0);
+			expect(existsSync(queuePath)).toBe(true);
+			const queued = readFileSync(queuePath, "utf-8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line) as { body: Record<string, unknown> });
+			expect(queued).toHaveLength(1);
+			expect(queued[0].body.session_id).toBe("test-session-1");
+			expect(capturedStderr.join("")).toContain("Queued ingestion");
+		});
+
+		it("flushes queued payloads before posting the current session", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			writeFileSync(
+				join(tmpDir, "queue.jsonl"),
+				`${JSON.stringify({
+					url: "https://divmemory.divkix.workers.dev/ingest",
+					body: {
+						session_id: "queued-session",
+						project_id: "queued-project",
+						conversation: "User: queued",
+					},
+				})}\n`,
+				"utf-8",
+			);
+			writeFileSync(join(tmpDir, "test.jsonl"), makeJsonl([{ role: "user", content: "current" }]));
+			process.env.DIVMEMORY_WORKER_URL = "https://custom.example.com";
+			const fetchFn = mockFetch();
+
+			await processSessionEnd(makeStdin(), {
+				fetch: fetchFn,
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			expect(fetchCalls.map((call) => (call.body as Record<string, unknown>).session_id)).toEqual([
+				"queued-session",
+				"test-session-1",
+			]);
+			expect(readFileSync(join(tmpDir, "queue.jsonl"), "utf-8")).toBe("");
+		});
+
 		it("sends empty metadata {} (VAL-PLUGIN-017)", async () => {
 			const stdin = makeStdin();
 			writeFileSync(
@@ -540,7 +598,7 @@ describe("session-end hook", () => {
 				stdout: (s: string) => capturedStdout.push(s),
 			});
 			const body = fetchCalls[0].body as Record<string, string>;
-			expect(body.project_id).toBe("fallback-dir");
+			expect(body.project_id).toMatch(/^local-[a-f0-9]{12}-fallback-dir$/);
 			expect(body.project_name).toBe("fallback-dir");
 		});
 
@@ -588,7 +646,7 @@ describe("session-end hook", () => {
 				"utf-8",
 			);
 			process.env.DIVMEMORY_API_KEY = "test-key";
-			process.env.DIVMEMORY_WORKER_URL = undefined;
+			delete process.env.DIVMEMORY_WORKER_URL;
 			const fetchFn = mockFetch();
 			await processSessionEnd(stdin, {
 				fetch: fetchFn,
@@ -636,7 +694,7 @@ describe("session-end hook", () => {
 				makeJsonl([{ role: "user", content: "hi" }]),
 				"utf-8",
 			);
-			process.env.DIVMEMORY_API_KEY = undefined;
+			delete process.env.DIVMEMORY_API_KEY;
 			const fetchFn = mockFetch();
 			const result = await processSessionEnd(stdin, {
 				fetch: fetchFn,

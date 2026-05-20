@@ -7,20 +7,24 @@
  */
 
 import { spawn } from "node:child_process";
-import { basename } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, resolve } from "node:path";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 
 /**
  * Get the project ID from a directory.
- * Tries `git remote get-url origin` first, falls back to basename(cwd).
+ * Tries `git remote get-url origin` first, falls back to a hashed absolute-path slug.
  * Normalizes .git suffix, trailing slashes, lowercases, SSH git@, and protocols.
  * Shared logic with session-end.mjs for consistency.
  */
 export async function getProjectId(cwd) {
+	const projectCwd = cwd || process.cwd();
 	try {
 		const result = await new Promise((resolve, reject) => {
-			const child = spawn("git", ["-C", cwd, "remote", "get-url", "origin"], {
+			const child = spawn("git", ["-C", projectCwd, "remote", "get-url", "origin"], {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let stdout = "";
@@ -54,7 +58,9 @@ export async function getProjectId(cwd) {
 
 		return normalized;
 	} catch {
-		return basename(cwd || process.cwd());
+		const absolute = resolve(projectCwd);
+		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
+		return `local-${hash}-${basename(absolute)}`;
 	}
 }
 
@@ -68,6 +74,34 @@ function getApiKey() {
 
 function writeFallback(stdout) {
 	stdout("\n");
+}
+
+function getDivmemoryHome() {
+	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
+}
+
+function cachePathForProject(projectId) {
+	return join(getDivmemoryHome(), "cache", `${encodeURIComponent(projectId)}.txt`);
+}
+
+function readCachedContext(projectId) {
+	const path = cachePathForProject(projectId);
+	if (!existsSync(path)) return "";
+	try {
+		return readFileSync(path, "utf-8");
+	} catch {
+		return "";
+	}
+}
+
+function writeCachedContext(projectId, text) {
+	if (!text?.trim()) return;
+	const path = cachePathForProject(projectId);
+	mkdirSync(join(getDivmemoryHome(), "cache"), { recursive: true, mode: 0o700 });
+	writeFileSync(path, text.endsWith("\n") ? text : `${text}\n`, {
+		encoding: "utf-8",
+		mode: 0o600,
+	});
 }
 
 /**
@@ -109,10 +143,12 @@ export async function processSessionStart(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(cwd || process.cwd());
+	const cached = readCachedContext(projectId);
 
 	if (!API_KEY) {
 		stderr("[divmemory] DIVMEMORY_API_KEY not set. No context injected.");
-		writeFallback(stdout);
+		if (cached.trim()) stdout(`${cached.trimEnd()}\n`);
+		else writeFallback(stdout);
 		return { exitCode: 0 };
 	}
 
@@ -137,14 +173,23 @@ export async function processSessionStart(stdinData, deps = {}) {
 		const text = await res.text();
 		if (!text?.trim()) {
 			stderr("[divmemory] Empty context received.");
-			writeFallback(stdout);
+			if (cached.trim()) stdout(`${cached.trimEnd()}\n`);
+			else writeFallback(stdout);
 			return { exitCode: 0 };
 		}
 
-		stdout(`${text}\n`);
+		if (text.trim()) {
+			stdout(`${text.trimEnd()}\n`);
+			writeCachedContext(projectId, text);
+		} else if (cached.trim()) {
+			stdout(`${cached.trimEnd()}\n`);
+		} else {
+			writeFallback(stdout);
+		}
 	} catch (err) {
 		stderr(`[divmemory] Network error fetching context: ${err.message}`);
-		writeFallback(stdout);
+		if (cached.trim()) stdout(`${cached.trimEnd()}\n`);
+		else writeFallback(stdout);
 	}
 
 	return { exitCode: 0 };

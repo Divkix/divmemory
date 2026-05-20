@@ -422,5 +422,30 @@ describe("GET /context", () => {
 			expect(body).toContain("Your Preferences");
 			expect(body).toContain("General");
 		});
+
+		it("prioritizes curated facts within a topic even when older than noisy facts", async () => {
+			const now = Date.now();
+			await seedMemories(testDb.db, "priority", [
+				{
+					topic: "general",
+					content: `Noisy recent fact ${"x".repeat(700)}`,
+					curated: 0,
+					updatedAt: new Date(now).toISOString(),
+				},
+				{
+					topic: "general",
+					content: "Curated critical fact must survive truncation",
+					curated: 1,
+					updatedAt: new Date(now - 100_000).toISOString(),
+				},
+			]);
+			const req = new Request("http://localhost/context?project=priority&max_chars=700", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body).toContain("Curated critical fact must survive truncation");
+		});
 	});
 });

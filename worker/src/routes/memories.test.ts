@@ -197,6 +197,135 @@ function seedMemory(
 
 /* ───────── GET /memories ───────── */
 
+describe("POST /memories", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	let sqlite: ReturnType<typeof createTestDb>["sqlite"];
+
+	beforeEach(() => {
+		_seedCounter = 0;
+		testDb = createTestDb();
+		sqlite = testDb.sqlite;
+	});
+
+	it("creates a curated manual memory with confidence 1.0", async () => {
+		const app = createMemoriesApp(testDb.db);
+		const req = new Request("http://localhost/memories", {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify({
+				project_id: "manual-proj",
+				project_name: "Manual Project",
+				topic: "decisions",
+				content: "Use Droid-only plugin hooks for divmemory v1.",
+			}),
+		});
+
+		const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as { ok: boolean; id: string; curated: number };
+		expect(body.ok).toBe(true);
+		expect(body.curated).toBe(1);
+
+		const row = testDb.db.select().from(memories).where(eq(memories.id, body.id)).get() as
+			| {
+					projectId: string;
+					topic: string;
+					content: string;
+					confidence: number;
+					curated: number;
+					status: string;
+			  }
+			| undefined;
+		expect(row).toMatchObject({
+			projectId: "manual-proj",
+			topic: "decisions",
+			content: "Use Droid-only plugin hooks for divmemory v1.",
+			confidence: 1,
+			curated: 1,
+			status: "active",
+		});
+
+		const session = sqlite
+			.query("SELECT source FROM sessions WHERE id = ?")
+			.get(`manual:${body.id}`) as { source?: string } | undefined;
+		expect(session?.source).toBe("manual-add");
+	});
+
+	it("defaults manual memory topic to general", async () => {
+		const app = createMemoriesApp(testDb.db);
+		const req = new Request("http://localhost/memories", {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify({
+				project_id: "manual-default",
+				content: "Remember this plain fact.",
+			}),
+		});
+
+		const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as { id: string };
+		const row = testDb.db.select().from(memories).where(eq(memories.id, body.id)).get() as
+			| { topic: string }
+			| undefined;
+		expect(row?.topic).toBe("general");
+	});
+
+	it("rejects invalid manual memory topic before writing", async () => {
+		const app = createMemoriesApp(testDb.db);
+		const req = new Request("http://localhost/memories", {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify({
+				project_id: "manual-bad",
+				topic: "not-a-topic",
+				content: "Bad topic fact.",
+			}),
+		});
+
+		const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+		expect(res.status).toBe(400);
+	});
+
+	it("dedups similar manual facts without overwriting existing content", async () => {
+		const app = createMemoriesApp(testDb.db);
+		seedProject(sqlite, "manual-dedup");
+		const existingId = seedMemory(sqlite, "manual-dedup", "Use Vitest for unit testing.", {
+			curated: 0,
+			confidence: 0.8,
+			updatedAt: "2026-05-18T00:00:00.000Z",
+		});
+
+		const req = new Request("http://localhost/memories", {
+			method: "POST",
+			headers: authHeaders(),
+			body: JSON.stringify({
+				project_id: "manual-dedup",
+				topic: "preferences",
+				content: "Use Vitest for unit testing in this repository.",
+			}),
+		});
+
+		const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { id: string; deduped: boolean };
+		expect(body).toMatchObject({ id: existingId, deduped: true });
+
+		const rows = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, "manual-dedup"))
+			.all() as Array<{ id: string; content: string; curated: number; confidence: number }>;
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			id: existingId,
+			content: "Use Vitest for unit testing.",
+			curated: 1,
+			confidence: 1,
+		});
+	});
+});
+
 describe("GET /memories", () => {
 	let testDb: ReturnType<typeof createTestDb>;
 	let sqlite: ReturnType<typeof createTestDb>["sqlite"];

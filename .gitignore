@@ -9,3 +9,4 @@ build
 *.tsbuildinfo
 coverage
 .DS_Store
+.antigravitycli/

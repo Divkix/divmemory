@@ -137,17 +137,18 @@ export function createContextRoute(app: any, db?: DbLike) {
 
 		const projectName = project?.name || projectId.split("/").pop() || projectId;
 
-		// Fetch active memories ordered by topic, updated_at DESC
+		// Fetch active memories with curated facts first, then newest first.
 		const rows = (await dbCtx
 			.select()
 			.from(memories)
 			.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-			.orderBy(desc(memories.updatedAt))
+			.orderBy(desc(memories.curated), desc(memories.updatedAt))
 			.all()) as Array<{
 			id: string;
 			projectId: string;
 			topic: string | null;
 			content: string | null;
+			curated: number | null;
 			updatedAt: string | null;
 		}>;
 
@@ -164,7 +165,14 @@ export function createContextRoute(app: any, db?: DbLike) {
 		}
 
 		const factCount = rows.length;
-		const updatedAt = rows.length > 0 ? rows[0].updatedAt || nowISO() : nowISO();
+		let latestRow: string | null = null;
+		for (const row of rows) {
+			if (!row.updatedAt) continue;
+			if (!latestRow || row.updatedAt > latestRow) {
+				latestRow = row.updatedAt;
+			}
+		}
+		const updatedAt = latestRow || nowISO();
 
 		// Build sections in consistent topic order
 		const sections: Array<{ label: string; text: string; factCount: number }> = [];

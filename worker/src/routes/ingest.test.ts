@@ -406,8 +406,15 @@ describe("ingest endpoint", () => {
 			});
 			const res = await app2.fetch(req, envVars() as unknown as Record<string, string>, ctx);
 			expect(res.status).toBe(200);
-			const json = (await res.json()) as { ok: boolean; facts_written: number };
+			const json = (await res.json()) as {
+				ok: boolean;
+				status: string;
+				session_id: string;
+				facts_written: number;
+			};
 			expect(json.ok).toBe(true);
+			expect(json.status).toBe("queued");
+			expect(json.session_id).toBe("sess-async");
 			expect(json.facts_written).toBe(0); // async, not yet extracted
 
 			// Wait for async extraction to finish

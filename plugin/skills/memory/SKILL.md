@@ -19,8 +19,8 @@ You can manage your memory directly using the `/memory` command:
   block. If empty, print "No memories recorded yet for this project."
 
 - **`/memory add "<fact>" [topic]`** — Insert a curated fact manually.
-  Calls `POST /ingest` with the fact as a synthetic session (`source: manual-add`).
-  Sets `curated=1`, `confidence=1.0`. Default topic is `"general"`.
+  Calls `POST /memories` with `project_id`, `content`, and optional `topic`.
+  The API stores `curated=1`, `confidence=1.0`. Default topic is `"general"`.
   If a similar fact exists (Jaccard > 60%), the curated addition refreshes `updated_at` only — existing content is NOT overwritten.
   If no similar fact exists, a new memory row is inserted.
   Print success confirmation or dedup info to the user.
@@ -36,7 +36,7 @@ You can manage your memory directly using the `/memory` command:
   If no sessions need consolidation, print "Nothing to consolidate."
 
 - **`/memory status`** — Show project statistics.
-  Calls `GET /memories?project=<id>` (or a stats endpoint) and prints:
+  Calls `GET /status?project=<id>` and prints:
   - Session count
   - Active fact count
   - Last sync timestamp
@@ -45,7 +45,7 @@ You can manage your memory directly using the `/memory` command:
 All `/memory` commands use:
 - `Authorization: Bearer <DIVMEMORY_API_KEY>`
 - Worker URL from `DIVMEMORY_WORKER_URL` env var (default `https://divmemory.divkix.workers.dev`)
-- Project ID determined identically to SessionStart/SessionEnd hooks (git remote origin, basename(cwd) fallback)
+- Project ID determined identically to SessionStart/SessionEnd hooks (git remote origin, hashed absolute-path fallback)
 
 ### Error handling
 If the Worker is unreachable or returns an error, print a friendly error message.

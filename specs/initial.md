@@ -135,20 +135,20 @@ divmemory/                        # GitHub: divkix/divmemory
 
 ## 4. Plugin Structure
 
-### 4.1 Plugin Manifest — `plugin/.factory-plugin/plugin.json`
+### 4.1 Plugin Manifest — `plugins/divmemory/.factory-plugin/plugin.json`
 
 ```json
 {
   "name": "divmemory",
   "description": "Persistent cross-session memory for Droid. Extracts facts from each session and injects them back on start.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": {
     "name": "divkix"
   }
 }
 ```
 
-### 4.2 Hook Config — `plugin/hooks/hooks.json`
+### 4.2 Hook Config — `plugins/divmemory/hooks/hooks.json`
 
 ```json
 {
@@ -179,7 +179,7 @@ divmemory/                        # GitHub: divkix/divmemory
 
 ## 5. Hook Scripts
 
-### 5.1 SessionEnd — `plugin/hooks/session-end.mjs`
+### 5.1 SessionEnd — `plugins/divmemory/hooks/session-end.mjs`
 
 **Receives** (via stdin, actual Droid hook format):
 
@@ -195,7 +195,8 @@ divmemory/                        # GitHub: divkix/divmemory
 
 **Project identification**: Run `git remote get-url origin` from `cwd`. Use the
 remote URL as the canonical project ID (e.g., `github.com/divkix/my-app`). If
-no git remote (scratch directory), fall back to `path.basename(cwd)`.
+no git remote exists, fall back to a hashed absolute-path slug such as
+`local-3f91ab4c2d10-my-app` to prevent basename collisions.
 
 **Conversation extraction logic**:
 
@@ -211,7 +212,7 @@ messages
 5. Prepend `User: ` and `Assistant: ` prefixes to turns for extraction clarity
 
 **Logic**:
-1. Determine project ID (git remote or dirname fallback)
+1. Determine project ID (git remote or hashed absolute-path slug fallback)
 2. Parse transcript and build clean conversation text
 3. `POST https://divmemory.divkix.workers.dev/ingest` with:
 
@@ -231,7 +232,7 @@ messages
 
 **Auth**: reads `DIVMEMORY_API_KEY` from env.
 
-### 5.2 SessionStart — `plugin/hooks/session-start.mjs`
+### 5.2 SessionStart — `plugins/divmemory/hooks/session-start.mjs`
 
 **Receives** (via stdin, actual Droid SessionStart hook format):
 
@@ -751,7 +752,7 @@ implementation.
 | # | Decision | Resolution |
 |---|---|---|
 | 1 | Repo structure | Monorepo: `worker/`, `plugin/`, `cli/` |
-| 2 | Project ID | Git remote origin, dirname fallback |
+| 2 | Project ID | Git remote origin, hashed absolute-path slug |
 | 3 | Memory injection method | SessionStart hook stdout → direct context injection. NO AGENTS.md editing |
 | 4 | Token / char budget | 12K chars cap, min 500 chars per topic guarantee. Tunable via `max_chars` param |
 | 5 | Merge strategy | Token-overlap Jaccard similarity (>60%), update if confidence higher, always refresh `updated_at` |
