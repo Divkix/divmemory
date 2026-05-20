@@ -226,7 +226,11 @@ async function ensureProjectExists(db: DbLike, body: IngestBody, now: string): P
 	}
 }
 
-async function incrementProjectSessionCount(db: DbLike, body: IngestBody, now: string): Promise<void> {
+async function incrementProjectSessionCount(
+	db: DbLike,
+	body: IngestBody,
+	now: string,
+): Promise<void> {
 	// Increments sessionCount and updates lastSeen for an existing project.
 	// Only called AFTER the session insert confirmed this is a new session.
 	const projectId = body.project_id;
