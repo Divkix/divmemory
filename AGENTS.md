@@ -40,10 +40,16 @@ Run these from the repository root:
 
 ## Commit & Pull Request Guidelines
 
-This project uses **Conventional Commits** with scope prefixes:
+This project uses **Conventional Commits** with scope prefixes. The template is:
 
+```text
+<type>(<scope>): <description>
 ```
-<scope>: <description>
+
+When no scope is applicable, use:
+
+```text
+<type>: <description>
 ```
 
 Examples from history:
