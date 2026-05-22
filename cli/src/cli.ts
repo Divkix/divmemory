@@ -184,6 +184,10 @@ export function extractConversation(jsonlContent: string): string {
 			targetMsg = msg.message as Record<string, unknown>;
 		}
 
+		if (msg.visibility === "llm_only" || targetMsg.visibility === "llm_only") {
+			continue;
+		}
+
 		const type = targetMsg.type as string | undefined;
 		if (type === "system-reminder" || type === "system-notification") continue;
 		if (type === "thinking") continue;

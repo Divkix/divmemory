@@ -302,6 +302,41 @@ describe("bootstrap cli", () => {
 			expect(conv).not.toContain("nested thought");
 		});
 
+		it("skips messages with visibility set to llm_only", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const jsonl = [
+				JSON.stringify({
+					type: "message",
+					visibility: "llm_only",
+					message: {
+						role: "user",
+						content: [{ type: "text", text: "this should be skipped outer" }],
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "user",
+						visibility: "llm_only",
+						content: [{ type: "text", text: "this should be skipped inner" }],
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "user",
+						content: [{ type: "text", text: "keep this message" }],
+					},
+				}),
+			].join("\n");
+			const conv = extractConversation(jsonl);
+			expect(conv).toContain("User: keep this message");
+			expect(conv).not.toContain("this should be skipped outer");
+			expect(conv).not.toContain("this should be skipped inner");
+		});
+
 		it("strips thinking blocks", async () => {
 			const mod = await loadCliModule();
 			const { extractConversation } = mod;
