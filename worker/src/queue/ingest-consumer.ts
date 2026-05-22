@@ -29,10 +29,10 @@ export async function processIngestQueue(
 		return;
 	}
 
-	const dbCtx = "select" in env.DB ? env.DB : drizzle(env.DB as D1Database);
-	if (!dbCtx) {
+	if (!env.DB) {
 		throw new Error("D1 Database binding 'DB' is missing in environment");
 	}
+	const dbCtx = "select" in env.DB ? env.DB : drizzle(env.DB as D1Database);
 
 	const fwKey = env.FIREWORKS_API_KEY ?? "";
 	const fwModel = env.FIREWORKS_MODEL; // extractFacts has default model if undefined

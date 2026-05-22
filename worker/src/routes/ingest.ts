@@ -489,7 +489,19 @@ export function createIngestRoute(
 				// ── auto-consolidation trigger (outside atomic tx) ──
 				const unconsol = await unconsolidatedCount(body.project_id, dbCtx);
 				if (unconsol >= 5) {
-					triggerConsolidation(body.project_id, dbCtx, c);
+					const promise = triggerConsolidation(body.project_id, dbCtx, c);
+					if (promise instanceof Promise) {
+						const wc = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void };
+						if (typeof wc.waitUntil === "function") {
+							wc.waitUntil(
+								promise.catch((err) => {
+									console.error("[Auto-Consolidation] Inline trigger failed:", err);
+								}),
+							);
+						} else {
+							await promise;
+						}
+					}
 				}
 				return factsWritten;
 			} catch (e) {
