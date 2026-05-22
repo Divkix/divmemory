@@ -181,16 +181,16 @@ async function dedupFacts(
 /* ───────── helpers: auto-consolidation trigger ───────── */
 
 export function setConsolidationTrigger(
-	fn: (projectId: string, db: DbLike, c: unknown) => void | Promise<void>,
+	fn: (projectId: string, db: DbLike, c: unknown) => undefined | Promise<unknown>,
 ) {
 	consolidationTrigger = fn;
 }
 
-let consolidationTrigger: (projectId: string, db: DbLike, c: unknown) => void | Promise<void> = (
-	_projectId: string,
-	_db: DbLike,
-	_c: unknown,
-) => {
+let consolidationTrigger: (
+	projectId: string,
+	db: DbLike,
+	c: unknown,
+) => undefined | Promise<unknown> = (_projectId: string, _db: DbLike, _c: unknown) => {
 	// default no-op — real trigger wired by the consolidation feature
 };
 
@@ -203,8 +203,12 @@ export async function unconsolidatedCount(projectId: string, db: DbLike): Promis
 	return row?.count ?? 0;
 }
 
-export function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
-	consolidationTrigger(projectId, db, c);
+export function triggerConsolidation(
+	projectId: string,
+	db: DbLike,
+	c: unknown,
+): undefined | Promise<unknown> {
+	return consolidationTrigger(projectId, db, c);
 }
 
 /* ───────── split atomic DB operations: pre-insert (session with raw_text) + post-extraction update ───────── */
@@ -214,20 +218,16 @@ async function ensureProjectExists(db: DbLike, body: IngestBody, now: string): P
 	// increment sessionCount — that only happens after the session is
 	// confirmed as newly created (not a duplicate).
 	const projectId = body.project_id;
-	const existingProject = await db
-		.select({ id: projects.id })
-		.from(projects)
-		.where(eq(projects.id, projectId))
-		.get();
-	if (!existingProject) {
-		await db.insert(projects).values({
+	await db
+		.insert(projects)
+		.values({
 			id: projectId,
 			name: body.project_name || projectId.split("/").pop() || projectId,
 			sessionCount: 0, // will be incremented when the session is actually inserted
 			createdAt: now,
 			lastSeen: now,
-		});
-	}
+		})
+		.onConflictDoNothing();
 }
 
 export async function incrementProjectSessionCount(
@@ -374,9 +374,8 @@ export function createIngestRoute(
 					200,
 				);
 			}
-			// It is a failed session (consolidated === -1). Re-ingest / retry workflow.
-			isNewSession = false;
-			await dbCtx
+			// It is a failed session (consolidated === -1). Re-ingest / retry workflow using a compare-and-set update.
+			const updatedRow = await dbCtx
 				.update(sessions)
 				.set({
 					rawText: body.conversation,
@@ -386,7 +385,18 @@ export function createIngestRoute(
 					metadata: body.metadata ? JSON.stringify(body.metadata) : null,
 					createdAt: now,
 				})
-				.where(eq(sessions.id, body.session_id));
+				.where(and(eq(sessions.id, body.session_id), eq(sessions.consolidated, -1)))
+				.returning({ id: sessions.id })
+				.get();
+
+			if (!updatedRow) {
+				// The update affected 0 rows, meaning another request already retried/reset it.
+				return c.json(
+					{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
+					200,
+				);
+			}
+			isNewSession = false;
 		} else {
 			isNewSession = true;
 			// ── ensure project exists for FK compliance (no sessionCount bump yet) ──

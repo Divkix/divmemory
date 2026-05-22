@@ -116,6 +116,10 @@ Then apply migrations and run the local Worker:
 # Apply migrations (uses worker/migrations/ via migrations_dir in wrangler.jsonc)
 npx wrangler d1 migrations apply divmemory-db --local
 
+# (Optional for local, required for deployment) Create the Cloudflare queues:
+npx wrangler queues create divmemory-ingest
+npx wrangler queues create divmemory-ingest-dlq
+
 # Start the worker
 bun run dev    # runs `wrangler dev --port 8787`
 ```

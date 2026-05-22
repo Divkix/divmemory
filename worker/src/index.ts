@@ -15,7 +15,7 @@ import { createWebUiRoute } from "./routes/webui";
 /* ────────── Wire auto-consolidation trigger ────────── */
 ingest.setConsolidationTrigger(
 	(projectId: string, db: Parameters<typeof consolidate.runConsolidation>[1], c: unknown) => {
-		void consolidate.runConsolidation(projectId, db, {
+		return consolidate.runConsolidation(projectId, db, {
 			FIREWORKS_API_KEY: (c as { env: Record<string, string> }).env.FIREWORKS_API_KEY ?? "",
 			FIREWORKS_MODEL: (c as { env: Record<string, string> }).env.FIREWORKS_MODEL ?? "",
 		});

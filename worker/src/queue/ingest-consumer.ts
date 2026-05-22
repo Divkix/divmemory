@@ -1,6 +1,7 @@
-import type { D1Database, MessageBatch } from "@cloudflare/workers-types";
+import type { D1Database, ExecutionContext, MessageBatch } from "@cloudflare/workers-types";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
+import type { DbLike } from "../lib/db";
 import {
 	extractFacts,
 	processExtractionAfter,
@@ -17,11 +18,11 @@ export interface QueueMessage {
 export async function processIngestQueue(
 	batch: MessageBatch<QueueMessage>,
 	env: {
-		DB: D1Database | ReturnType<typeof drizzle>;
+		DB: D1Database | DbLike;
 		FIREWORKS_API_KEY?: string;
 		FIREWORKS_MODEL?: string;
 	},
-	_ctx?: unknown,
+	_ctx?: Pick<ExecutionContext, "waitUntil">,
 ): Promise<void> {
 	// Guard against empty batch
 	if (!batch.messages || batch.messages.length === 0) {
@@ -52,7 +53,7 @@ export async function processIngestQueue(
 		// Perform Fireworks fact extraction
 		const now = new Date().toISOString();
 		try {
-			const result = await extractFacts(sessionRow.rawText, fwKey, fwModel);
+			const result = await extractFacts(sessionRow.rawText || "", fwKey, fwModel);
 
 			// Check for transient errors first: e.g. status code 429, timeout, or abort
 			if (result.error) {
@@ -76,7 +77,7 @@ export async function processIngestQueue(
 					session_id: sessionId,
 					project_id: projectId,
 					source: sessionRow.source || "droid",
-					conversation: sessionRow.rawText,
+					conversation: sessionRow.rawText || "",
 				},
 				result,
 				now,
@@ -86,7 +87,14 @@ export async function processIngestQueue(
 			const unconsol = await unconsolidatedCount(projectId, dbCtx);
 			if (unconsol >= 5) {
 				// Compatibility: Pass `{ env }` as context because the trigger only accesses `.env`
-				triggerConsolidation(projectId, dbCtx, { env });
+				const promise = triggerConsolidation(projectId, dbCtx, { env });
+				if (promise instanceof Promise) {
+					if (_ctx?.waitUntil) {
+						_ctx.waitUntil(promise);
+					} else {
+						await promise;
+					}
+				}
 			}
 		} catch (error) {
 			// Check if this error is transient, if so, rethrow it
