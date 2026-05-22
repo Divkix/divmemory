@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+
+import {
+	divmemoryHome,
+	lookupProjectMapping,
+	mappingsPath,
+	getProjectId as resolveProjectId,
+} from "../../plugin/scripts/project-mappings.mjs";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 const DEFAULT_LIMIT = 50;
@@ -229,62 +234,14 @@ export function extractConversation(jsonlContent: string): string {
 	return turns.join("\n\n");
 }
 
-export function divmemoryHome(): string {
-	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
-}
+export { divmemoryHome, lookupProjectMapping };
 
 export function getMappingsFilePath(): string {
-	return join(divmemoryHome(), "project_mappings.json");
-}
-
-export function lookupProjectMapping(absolutePath: string): string | null {
-	try {
-		const raw = readFileSync(getMappingsFilePath(), "utf-8");
-		const mappings = JSON.parse(raw) as Record<string, string>;
-		const mapped = mappings[absolutePath];
-		return typeof mapped === "string" ? mapped : null;
-	} catch {
-		return null;
-	}
-}
-
-function localProjectId(absolutePath: string): string {
-	const hash = createHash("sha256").update(absolutePath).digest("hex").slice(0, 12);
-	return `local-${hash}-${basename(absolutePath)}`;
+	return mappingsPath();
 }
 
 export async function getProjectId(cwd: string): Promise<string> {
-	const absolutePath = resolve(cwd || process.cwd());
-	try {
-		const result = await new Promise<string>((resolve, reject) => {
-			const child = spawn("git", ["-C", absolutePath, "remote", "get-url", "origin"], {
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let stdout = "";
-			let stderr = "";
-			child.stdout.on("data", (d: string) => {
-				stdout += d;
-			});
-			child.stderr.on("data", (d: string) => {
-				stderr += d;
-			});
-			child.on("error", (err) => reject(err));
-			child.on("close", (code) => {
-				if (code === 0) resolve(stdout.trim());
-				else reject(new Error(stderr || `git exited ${code}`));
-			});
-		});
-
-		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
-		normalized = normalized.toLowerCase();
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
-		if (normalized.startsWith("git@")) {
-			normalized = normalized.replace(/^git@/, "").replace(":", "/");
-		}
-		return normalized;
-	} catch {
-		return lookupProjectMapping(absolutePath) ?? localProjectId(absolutePath);
-	}
+	return resolveProjectId(cwd);
 }
 
 export function getProjectName(projectId: string): string {

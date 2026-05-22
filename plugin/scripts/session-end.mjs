@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
 	appendFile,
 	mkdir,
@@ -9,60 +7,13 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
-import { writeProjectMapping } from "./project-mappings.mjs";
+import { getProjectId, writeProjectMapping } from "./project-mappings.mjs";
+
+export { getProjectId };
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
-
-/**
- * Get the project ID from a directory.
- * Tries `git remote get-url origin` first, falls back to a hashed absolute-path slug.
- * Normalizes .git suffix, trailing slashes, and lowercases the URL.
- */
-export async function getProjectId(cwd) {
-	const projectCwd = cwd || process.cwd();
-	try {
-		const result = await new Promise((resolve, reject) => {
-			const child = spawn("git", ["-C", projectCwd, "remote", "get-url", "origin"], {
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let stdout = "";
-			let stderr = "";
-			child.stdout.on("data", (d) => {
-				stdout += d;
-			});
-			child.stderr.on("data", (d) => {
-				stderr += d;
-			});
-			child.on("error", (err) => reject(err));
-			child.on("close", (code) => {
-				if (code === 0) resolve(stdout.trim());
-				else reject(new Error(stderr || `git exited ${code}`));
-			});
-		});
-
-		// Normalize: strip .git suffix and trailing slashes
-		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
-
-		// Lowercase the string
-		normalized = normalized.toLowerCase();
-
-		// Strip protocol (https://, ssh://, etc.)
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
-
-		// Convert SSH "git@host:path" to "host/path"
-		if (normalized.startsWith("git@")) {
-			normalized = normalized.replace(/^git@/, "").replace(":", "/");
-		}
-
-		return normalized;
-	} catch {
-		const absolute = resolve(projectCwd);
-		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
-		return `local-${hash}-${basename(absolute)}`;
-	}
-}
 
 /**
  * Extract clean conversation text from a JSONL transcript string.

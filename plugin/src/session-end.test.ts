@@ -1004,6 +1004,20 @@ describe("session-end hook", () => {
 			}
 		});
 
+		it("getProjectId uses central mapping when git is unavailable", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			const worktreePath = resolve(tmpDir, "mapped-only");
+			const { mkdirSync, writeFileSync: writeFs } = await import("node:fs");
+			mkdirSync(worktreePath, { recursive: true });
+			writeFs(
+				join(tmpDir, "project_mappings.json"),
+				JSON.stringify({ [worktreePath]: "github.com/org/mapped-repo" }),
+				"utf-8",
+			);
+			const id = await getProjectId(worktreePath);
+			expect(id).toBe("github.com/org/mapped-repo");
+		});
+
 		it("2.3 writeProjectMapping survives concurrent writes", async () => {
 			process.env.DIVMEMORY_HOME = tmpDir;
 			const paths = Array.from({ length: 12 }, (_, i) => resolve(tmpDir, `concurrent-${i}`));

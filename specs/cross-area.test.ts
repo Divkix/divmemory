@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
@@ -547,6 +547,58 @@ describe("Cross-Area — API Key Rotation", () => {
 
 		const proj = testDb.db.select().from(projects).where(eq(projects.id, "proj-010")).get();
 		expect(proj?.sessionCount).toBe(1);
+	});
+});
+
+describe("Cross-Area — Project path mappings", () => {
+	it("VAL-CROSS-013: session-end writes mapping, CLI resolves deleted worktree path", async () => {
+		const { processSessionEnd } = await import("../plugin/scripts/session-end.mjs");
+		const { getProjectId } = await import("../cli/src/cli");
+		const tmpHome = mkdtempSync(join(tmpdir(), "cross-013-home-"));
+		const gitDir = join(tmpHome, "worktree");
+		const oldHome = process.env.DIVMEMORY_HOME;
+		const oldKey = process.env.DIVMEMORY_API_KEY;
+
+		try {
+			process.env.DIVMEMORY_HOME = tmpHome;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			mkdirSync(gitDir, { recursive: true });
+			const { execSync } = await import("node:child_process");
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/cloudflare/vinext.git", { cwd: gitDir });
+			const transcript = join(gitDir, "sess.jsonl");
+			writeFileSync(
+				transcript,
+				`${JSON.stringify({ role: "user", content: [{ type: "text", text: "hi" }] })}\n`,
+			);
+
+			await processSessionEnd(
+				JSON.stringify({
+					session_id: "cross-013",
+					cwd: gitDir,
+					transcript_path: transcript,
+					hook_event_name: "SessionEnd",
+				}),
+				{
+					fetch: async () =>
+						new Response(JSON.stringify({ ok: true, facts_written: 1 }), { status: 200 }),
+					stderr: () => {},
+					stdout: () => {},
+				},
+			);
+
+			const absolutePath = resolve(gitDir);
+			rmdirSync(gitDir, { recursive: true });
+
+			const projectId = await getProjectId(absolutePath);
+			expect(projectId).toBe("github.com/cloudflare/vinext");
+		} finally {
+			if (oldHome === undefined) delete process.env.DIVMEMORY_HOME;
+			else process.env.DIVMEMORY_HOME = oldHome;
+			if (oldKey === undefined) delete process.env.DIVMEMORY_API_KEY;
+			else process.env.DIVMEMORY_API_KEY = oldKey;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
 	});
 });
 

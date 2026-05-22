@@ -1,49 +1,16 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
-import { writeProjectMapping } from "../../../plugin/scripts/project-mappings.mjs";
+import {
+	divmemoryHome,
+	getProjectId,
+	writeProjectMapping,
+} from "../../../plugin/scripts/project-mappings.mjs";
+
+export { getProjectId };
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
-
-export async function getProjectId(cwd) {
-	const projectCwd = cwd || process.cwd();
-	try {
-		const result = await new Promise((resolve, reject) => {
-			const child = spawn("git", ["-C", projectCwd, "remote", "get-url", "origin"], {
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let stdout = "";
-			let stderr = "";
-			child.stdout.on("data", (d) => {
-				stdout += d;
-			});
-			child.stderr.on("data", (d) => {
-				stderr += d;
-			});
-			child.on("error", (err) => reject(err));
-			child.on("close", (code) => {
-				if (code === 0) resolve(stdout.trim());
-				else reject(new Error(stderr || `git exited ${code}`));
-			});
-		});
-
-		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
-		normalized = normalized.toLowerCase();
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
-		if (normalized.startsWith("git@")) {
-			normalized = normalized.replace(/^git@/, "").replace(":", "/");
-		}
-		return normalized;
-	} catch {
-		const absolute = resolve(projectCwd);
-		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
-		return `local-${hash}-${basename(absolute)}`;
-	}
-}
 
 function workerUrl() {
 	return process.env.DIVMEMORY_WORKER_URL || DEFAULT_WORKER_URL;
@@ -51,10 +18,6 @@ function workerUrl() {
 
 function apiKey() {
 	return process.env.DIVMEMORY_API_KEY;
-}
-
-function divmemoryHome() {
-	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
 }
 
 function cachePath(projectId) {

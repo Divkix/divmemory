@@ -1,7 +1,9 @@
-export function getProjectId(cwd: string): Promise<string>;
 export {
 	divmemoryHome,
+	getProjectId,
+	lookupProjectMapping,
 	mappingsPath,
+	resolveProjectId,
 	writeProjectMapping,
 } from "./project-mappings.mjs";
 export function extractConversation(jsonlContent: string): string;

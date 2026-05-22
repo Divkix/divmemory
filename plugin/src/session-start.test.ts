@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { getProjectId, processSessionStart } from "../scripts/session-start.mjs";
@@ -200,6 +200,20 @@ describe("session-start hook", () => {
 			const id = await getProjectId(gitDir);
 			expect(id).toBe(id.toLowerCase());
 			expect(id).toContain("github.com");
+		});
+
+		it("uses central mapping when git is unavailable", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			const worktreePath = resolve(tmpDir, "mapped-start");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(worktreePath, { recursive: true });
+			writeFileSync(
+				join(tmpDir, "project_mappings.json"),
+				JSON.stringify({ [worktreePath]: "github.com/org/mapped-start" }),
+				"utf-8",
+			);
+			const id = await getProjectId(worktreePath);
+			expect(id).toBe("github.com/org/mapped-start");
 		});
 
 		it("uses process.cwd() when cwd not provided in stdin", async () => {

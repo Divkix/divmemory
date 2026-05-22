@@ -79,6 +79,24 @@ openssl rand -hex 32
 | `DIVMEMORY_WEB_PASSWORD` | Worker secret | Password for web UI login |
 | `DIVMEMORY_HOME` | Shell / Droid env (optional) | Local cache/queue directory, defaults to `~/.divmemory` |
 
+#### Project path mappings (`project_mappings.json`)
+
+When you work in a git worktree, divmemory records the canonical project ID (normalized git remote) keyed by **absolute path** in:
+
+`{DIVMEMORY_HOME}/project_mappings.json` (default: `~/.divmemory/project_mappings.json`)
+
+Example:
+
+```json
+{
+  "/Users/you/GitHub/worktrees/my-app-feature": "github.com/org/my-app"
+}
+```
+
+- **Written** on each **session-end** when `git remote get-url origin` succeeds (not written for `local-*` fallback IDs).
+- **Read** by the bootstrap CLI when git cannot run on that path anymore (e.g. deleted worktree folder), before falling back to a hashed `local-*` project ID.
+- **Requirement:** Run at least one session-end on a path while it still exists on disk, so a later bootstrap of historical sessions under that encoded path resolves to the same project.
+
 Set Worker secrets:
 
 ```bash
