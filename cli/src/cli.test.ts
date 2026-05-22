@@ -273,6 +273,35 @@ describe("bootstrap cli", () => {
 			expect(conv).toContain("Assistant: world");
 		});
 
+		it("extracts nested user and assistant messages with nested structures", async () => {
+			const mod = await loadCliModule();
+			const { extractConversation } = mod;
+			if (!extractConversation) return;
+			const jsonl = [
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "user",
+						content: [{ type: "text", text: "nested user greeting" }],
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "thinking", text: "nested thought" },
+							{ type: "text", text: "nested assistant reply" },
+						],
+					},
+				}),
+			].join("\n");
+			const conv = extractConversation(jsonl);
+			expect(conv).toContain("User: nested user greeting");
+			expect(conv).toContain("Assistant: nested assistant reply");
+			expect(conv).not.toContain("nested thought");
+		});
+
 		it("strips thinking blocks", async () => {
 			const mod = await loadCliModule();
 			const { extractConversation } = mod;
