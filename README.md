@@ -113,9 +113,8 @@ Wrangler prints a `database_id`. Put that value into `worker/wrangler.jsonc` und
 Then apply migrations and run the local Worker:
 
 ```bash
-# Apply migrations
-npx wrangler d1 execute divmemory-db --local --file=./drizzle/0000_giant_tyrannus.sql
-npx wrangler d1 execute divmemory-db --local --file=./drizzle/0001_sloppy_punisher.sql
+# Apply migrations (uses worker/migrations/ via migrations_dir in wrangler.jsonc)
+npx wrangler d1 migrations apply divmemory-db --local
 
 # Start the worker
 bun run dev    # runs `wrangler dev --port 8787`
@@ -363,17 +362,16 @@ Wrangler prints a `database_id` (UUID). **Copy that value** and paste it into `w
 
 ### 3. Apply database migrations
 
-D1 does not run migrations automatically. Apply every `.sql` file in `worker/drizzle/` in numeric order:
+D1 does not run migrations automatically. From `worker/`, apply pending migrations with Wrangler (reads `migrations_dir` in `wrangler.jsonc`):
 
 ```bash
 cd worker
-
-# For a fresh database, apply all migrations:
-npx wrangler d1 execute divmemory-db --remote --file=./drizzle/0000_giant_tyrannus.sql
-npx wrangler d1 execute divmemory-db --remote --file=./drizzle/0001_sloppy_punisher.sql
+npx wrangler d1 migrations apply divmemory-db --remote
 ```
 
-> **Tip:** If you're updating an existing deployment later, only apply new files your database has not yet received. Check the `drizzle/meta/` journal or query D1 directly to see what's already applied.
+Prefer `d1 migrations apply` over `d1 execute --file=...` per migration file. The apply command tracks which migrations ran and only runs unapplied files; manual `--file` execution bypasses that workflow and can cause duplicate runs or drift.
+
+> **Tip:** To see what is pending or already applied, run `npx wrangler d1 migrations list divmemory-db --remote`.
 
 ### 4. Set Worker secrets
 
@@ -463,11 +461,11 @@ cd worker
 bun run deploy
 ```
 
-If new SQL migrations were added, apply **only the new files** before redeploying:
+If new SQL migrations were added, apply pending migrations before redeploying:
 
 ```bash
 cd worker
-npx wrangler d1 execute divmemory-db --remote --file=./drizzle/000X_new_file.sql
+npx wrangler d1 migrations apply divmemory-db --remote
 bun run deploy
 ```
 
@@ -488,7 +486,7 @@ Store the `.sql` file outside the repo. The local `~/.divmemory/cache` and `queu
 |---|---|---|
 | `500` on first request | D1 not connected | Double-check `database_id` in `wrangler.jsonc` matches your real database. |
 | `401 Unauthorized` | Wrong `DIVMEMORY_API_KEY` | Verify the secret in Wrangler matches your shell env var. Secrets are case-sensitive. |
-| Migrations fail | SQL already applied | Skip files already run. Check `drizzle/meta/` for a journal of applied migrations. |
+| Migrations fail | SQL already applied | Skip files already run. Check `migrations/meta/` for a journal of applied migrations. |
 | Worker deploy hangs | Not logged in | Run `npx wrangler login` and try again. |
 | Firepass extraction fails | Missing or invalid `FIREWORKS_API_KEY` | Verify the key is active and has Firepass quota. CheckWorker logs via `npx wrangler tail`. |
 

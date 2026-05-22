@@ -12,7 +12,7 @@
 			"binding": "DB",
 			"database_name": "divmemory-db",
 			"database_id": "6350d7b4-82ec-419a-96e8-a89de66a874c",
-			"migrations_dir": "drizzle"
+			"migrations_dir": "./migrations"
 		}
 	],
 	"triggers": {
