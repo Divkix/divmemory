@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import {
 	divmemoryHome,
+	getAllMappingKeys,
 	lookupProjectMapping,
 	mappingsPath,
 	getProjectId as resolveProjectId,
@@ -162,18 +163,16 @@ export function decodeProjectDir(encoded: string): string | null {
 	}
 
 	// Consult central mapping for candidates with literal dashes (k < dashCount)
-	for (let k = dashCount - 1; k >= 0; k--) {
-		const dashPositions: number[] = [];
-		for (let i = 0; i < rest.length; i++) {
-			if (rest[i] === "-") dashPositions.push(i);
-		}
-		const chars = rest.split("");
-		for (let i = 0; i < k; i++) {
-			chars[dashPositions[i]] = "/";
-		}
-		const attempt = `/${chars.join("")}`;
-		if (lookupProjectMapping(attempt)) {
-			return attempt;
+	const keys = getAllMappingKeys();
+	for (const key of keys) {
+		if (key.startsWith("/")) {
+			const stripped = key.slice(1);
+			const encodedKey = stripped.replace(/\//g, "-");
+			if (encodedKey === rest) {
+				return key;
+			}
+		} else if (key === encoded) {
+			return key;
 		}
 	}
 

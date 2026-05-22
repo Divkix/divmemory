@@ -92,12 +92,25 @@ export function lookupProjectMapping(absolutePath, options = {}) {
 		}
 		let mapped = mappings[absolutePath];
 		if (typeof mapped !== "string" && absolutePath.startsWith("/")) {
-			const encodedKey = "-" + absolutePath.slice(1).replace(/\//g, "-");
+			const encodedKey = `-${absolutePath.slice(1).replace(/\//g, "-")}`;
 			mapped = mappings[encodedKey];
 		}
 		return typeof mapped === "string" ? mapped : null;
 	} catch {
 		return null;
+	}
+}
+
+export function getAllMappingKeys(options = {}) {
+	try {
+		const raw = readFileSync(mappingsPath(options.home), "utf-8");
+		const mappings = JSON.parse(raw);
+		if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
+			return [];
+		}
+		return Object.keys(mappings);
+	} catch {
+		return [];
 	}
 }
 
@@ -143,22 +156,24 @@ export async function resolveProjectId(cwd, options = {}) {
 		return normalizeGitRemote(result);
 	} catch {
 		if (absolutePath.startsWith("/")) {
-			const encoded = "-" + absolutePath.slice(1).replace(/\//g, "-");
+			const encoded = `-${absolutePath.slice(1).replace(/\//g, "-")}`;
 			const rest = encoded.slice(1);
-			const dashCount = (rest.match(/-/g) || []).length;
-			for (let k = dashCount - 1; k >= 0; k--) {
-				const dashPositions = [];
-				for (let i = 0; i < rest.length; i++) {
-					if (rest[i] === "-") dashPositions.push(i);
-				}
-				const chars = rest.split("");
-				for (let i = 0; i < k; i++) {
-					chars[dashPositions[i]] = "/";
-				}
-				const candidate = `/${chars.join("")}`;
-				const mapping = lookupProjectMapping(candidate, options);
-				if (mapping) {
-					return mapping;
+			const keys = getAllMappingKeys(options);
+			for (const key of keys) {
+				if (key.startsWith("/")) {
+					const stripped = key.slice(1);
+					const encodedKey = stripped.replace(/\//g, "-");
+					if (encodedKey === rest) {
+						const mapping = lookupProjectMapping(key, options);
+						if (mapping) {
+							return mapping;
+						}
+					}
+				} else if (key === encoded) {
+					const mapping = lookupProjectMapping(key, options);
+					if (mapping) {
+						return mapping;
+					}
 				}
 			}
 		}
@@ -217,5 +232,5 @@ export function writeProjectMapping(absolutePath, projectId, options = {}) {
 	);
 	const settled = work.catch(() => {});
 	writeChains.set(homeKey, settled);
-	return settled;
+	return work;
 }

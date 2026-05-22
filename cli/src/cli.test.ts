@@ -1746,19 +1746,40 @@ describe("bootstrap cli", () => {
 			expect(decodeProjectDir).toBeDefined();
 			expect(getMappingsFilePath).toBeDefined();
 
+			const absolutePath = "/Users/div/worktrees/vinext-earnest";
 			const encoded = "-Users-div-worktrees-vinext-earnest";
-			// Write the mapping using the encoded key so that decodeProjectDir must recover the path
+			// Write the mapping using the absolute path key (real production format)
 			writeFileSync(
 				getMappingsFilePath(),
-				JSON.stringify({ [encoded]: "github.com/cloudflare/vinext" }),
+				JSON.stringify({ [absolutePath]: "github.com/cloudflare/vinext" }),
 				"utf-8",
 			);
 
 			const decoded = decodeProjectDir(encoded);
-			expect(decoded).toBeTruthy();
+			expect(decoded).toBe(absolutePath);
 
 			const projectId = await getProjectId(decoded as string);
 			expect(projectId).toBe("github.com/cloudflare/vinext");
+		});
+
+		it("2.6 verifies writeProjectMapping/lookupProjectMapping for absolute-path keys", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, lookupProjectMapping } = mod;
+			const { writeProjectMapping } = await import("../../plugin/scripts/project-mappings.mjs");
+			expect(getProjectId).toBeDefined();
+			expect(lookupProjectMapping).toBeDefined();
+			expect(writeProjectMapping).toBeDefined();
+
+			const absolutePath = "/Users/div/worktrees/vinext-earnest";
+			const canonicalId = "github.com/cloudflare/vinext";
+
+			await writeProjectMapping(absolutePath, canonicalId);
+
+			const resolved = lookupProjectMapping(absolutePath);
+			expect(resolved).toBe(canonicalId);
+
+			const projectId = await getProjectId(absolutePath);
+			expect(projectId).toBe(canonicalId);
 		});
 	});
 
