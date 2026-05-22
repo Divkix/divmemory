@@ -194,7 +194,7 @@ let consolidationTrigger: (projectId: string, db: DbLike, c: unknown) => void | 
 	// default no-op — real trigger wired by the consolidation feature
 };
 
-async function unconsolidatedCount(projectId: string, db: DbLike): Promise<number> {
+export async function unconsolidatedCount(projectId: string, db: DbLike): Promise<number> {
 	const row = (await db
 		.select({ count: sql<number>`count(*)` })
 		.from(sessions)
@@ -203,7 +203,7 @@ async function unconsolidatedCount(projectId: string, db: DbLike): Promise<numbe
 	return row?.count ?? 0;
 }
 
-function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
+export function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
 	consolidationTrigger(projectId, db, c);
 }
 
@@ -230,7 +230,7 @@ async function ensureProjectExists(db: DbLike, body: IngestBody, now: string): P
 	}
 }
 
-async function incrementProjectSessionCount(
+export async function incrementProjectSessionCount(
 	db: DbLike,
 	body: IngestBody,
 	now: string,
@@ -251,7 +251,7 @@ async function incrementProjectSessionCount(
 	});
 }
 
-async function processExtractionAfter(
+export async function processExtractionAfter(
 	db: DbLike,
 	body: IngestBody,
 	result: ExtractionResult,
@@ -334,7 +334,7 @@ export function createIngestRoute(
 	app: any,
 	db: DbLike | undefined,
 	// biome-ignore lint/suspicious/noExplicitAny: env bindings vary across Workers runtimes
-	opts?: { getEnv?: (c: any) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
+	_opts?: { getEnv?: (c: any) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
 ) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types are runtime-specific
 	app.post("/ingest", async (c: any) => {
@@ -359,44 +359,116 @@ export function createIngestRoute(
 
 		const now = new Date().toISOString();
 
-		// ── ensure project exists for FK compliance (no sessionCount bump yet) ──
-		await ensureProjectExists(dbCtx, body, now);
-
-		// ── atomic session creation with duplicate detection ──
-		// INSERT with ON CONFLICT DO NOTHING is atomic at the SQL level, so
-		// concurrent requests for the same session_id cannot both win.
-		const created = await dbCtx
-			.insert(sessions)
-			.values({
-				id: body.session_id,
-				projectId: body.project_id,
-				source: body.source || "droid",
-				rawText: body.conversation,
-				consolidated: 0,
-				extractionError: null,
-				tokenCount: body.conversation.length,
-				metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-				createdAt: now,
-			})
-			.onConflictDoNothing()
-			.returning({ id: sessions.id })
+		// ── check for existing session & duplicate/retry logic ──
+		let isNewSession = false;
+		const existingSession = await dbCtx
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, body.session_id))
 			.get();
-		if (!created) {
+
+		if (existingSession) {
+			if (existingSession.consolidated !== null && existingSession.consolidated >= 0) {
+				return c.json(
+					{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
+					200,
+				);
+			}
+			// It is a failed session (consolidated === -1). Re-ingest / retry workflow.
+			isNewSession = false;
+			await dbCtx
+				.update(sessions)
+				.set({
+					rawText: body.conversation,
+					consolidated: 0,
+					extractionError: null,
+					tokenCount: body.conversation.length,
+					metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+					createdAt: now,
+				})
+				.where(eq(sessions.id, body.session_id));
+		} else {
+			isNewSession = true;
+			// ── ensure project exists for FK compliance (no sessionCount bump yet) ──
+			await ensureProjectExists(dbCtx, body, now);
+
+			const created = await dbCtx
+				.insert(sessions)
+				.values({
+					id: body.session_id,
+					projectId: body.project_id,
+					source: body.source || "droid",
+					rawText: body.conversation,
+					consolidated: 0,
+					extractionError: null,
+					tokenCount: body.conversation.length,
+					metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+					createdAt: now,
+				})
+				.onConflictDoNothing()
+				.returning({ id: sessions.id })
+				.get();
+			if (!created) {
+				return c.json(
+					{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
+					200,
+				);
+			}
+		}
+
+		// ── Queue-based pipeline if binding exists ──
+		if (c.env?.INGEST_QUEUE) {
+			if (isNewSession) {
+				await incrementProjectSessionCount(dbCtx, body, now);
+			}
+
+			// Enqueue the ingestion task
+			try {
+				const queue = c.env.INGEST_QUEUE;
+				await queue.send({
+					sessionId: body.session_id,
+					projectId: body.project_id,
+				});
+			} catch (_queueError) {
+				// Rollback state to avoid orphaned sessions
+				if (isNewSession) {
+					await dbCtx.delete(sessions).where(eq(sessions.id, body.session_id));
+					// Revert project count bump
+					await runAtomic(dbCtx, async (tx, addStmt) => {
+						addStmt(
+							tx
+								.update(projects)
+								.set({ sessionCount: sql`${projects.sessionCount} - 1` })
+								.where(eq(projects.id, body.project_id)),
+						);
+					});
+				} else {
+					// Revert to failed state for retry session
+					await dbCtx
+						.update(sessions)
+						.set({ consolidated: -1, extractionError: "Queue send failed" })
+						.where(eq(sessions.id, body.session_id));
+				}
+				return c.json({ error: "Failed to queue ingestion" }, 500);
+			}
+
 			return c.json(
-				{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
-				200,
+				{ ok: true, status: "queued", session_id: body.session_id, facts_written: 0 },
+				202,
 			);
 		}
 
-		// ── unified atomic transaction: fact extraction + persist ──
-		const env = opts?.getEnv ? opts.getEnv(c) : {};
+		// ── Legacy/Fallback inline pipeline if binding does not exist ──
+		const env = _opts?.getEnv ? _opts.getEnv(c) : {};
 		const fwKey = env.FIREWORKS_API_KEY ?? "";
 		const fwModel = env.FIREWORKS_MODEL ?? DEFAULT_FIREWORKS_MODEL;
 
 		const doIngest = async () => {
 			try {
-				// Step 1: Bump project session count (only after new session confirmed)
-				await incrementProjectSessionCount(dbCtx, body, now);
+				if (isNewSession) {
+					// Step 1: Bump project session count (only after new session confirmed)
+					await incrementProjectSessionCount(dbCtx, body, now);
+				}
 
 				// Step 2: Firepass extraction (network call, outside DB transaction)
 				const result = await extractFacts(body.conversation, fwKey, fwModel);

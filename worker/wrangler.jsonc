@@ -17,5 +17,22 @@
 	],
 	"triggers": {
 		"crons": ["0 3 * * *"]
+	},
+	"queues": {
+		"producers": [
+			{
+				"binding": "INGEST_QUEUE",
+				"queue": "divmemory-ingest"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "divmemory-ingest",
+				"max_batch_size": 1,
+				"max_concurrency": 1,
+				"max_retries": 5,
+				"retry_delay": 10
+			}
+		]
 	}
 }

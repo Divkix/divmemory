@@ -1,7 +1,10 @@
+import type { MessageBatch } from "@cloudflare/workers-types";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bearerAuth, hybridAuth } from "./auth";
 import { createLoginRoute } from "./login";
+import type { QueueMessage } from "./queue/ingest-consumer";
+import { processIngestQueue } from "./queue/ingest-consumer";
 import * as consolidate from "./routes/consolidate";
 import { createContextRoute } from "./routes/context";
 import * as ingest from "./routes/ingest";
@@ -124,4 +127,11 @@ async function scheduled(
 export default {
 	fetch: app.fetch,
 	scheduled,
+	queue: async (
+		batch: MessageBatch<QueueMessage>,
+		env: { DB: D1Database; FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
+		ctx: Pick<ExecutionContext, "waitUntil">,
+	): Promise<void> => {
+		await processIngestQueue(batch, env, ctx);
+	},
 };

@@ -1,9 +1,11 @@
+import type { Message, MessageBatch } from "@cloudflare/workers-types";
 import { eq, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
-import { projects, sessions } from "../schema";
+import type { QueueMessage } from "../queue/ingest-consumer";
+import { memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";
 import {
 	createIngestRoute,
@@ -14,15 +16,45 @@ import {
 
 const TEST_API_KEY = "test-api-key-123";
 
+class MockQueue {
+	public messages: unknown[] = [];
+	public failNext = false;
+
+	async send(message: unknown, _options?: unknown): Promise<void> {
+		if (this.failNext) {
+			throw new Error("Mock Queue Send Failure");
+		}
+		this.messages.push(message);
+	}
+
+	clear() {
+		this.messages = [];
+		this.failNext = false;
+	}
+}
+
+const mockQueue = new MockQueue();
+
 function createIngestApp(db: ReturnType<typeof drizzle>) {
-	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();
+	const app = new Hono<{
+		Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string; INGEST_QUEUE: MockQueue };
+	}>();
 	app.use("/ingest", bearerAuth("divmemory_session"));
 	createIngestRoute(app, db);
 	return app;
 }
 
 function envVars() {
-	return { DIVMEMORY_API_KEY: TEST_API_KEY };
+	return {
+		DIVMEMORY_API_KEY: TEST_API_KEY,
+	};
+}
+
+function envVarsWithQueue() {
+	return {
+		DIVMEMORY_API_KEY: TEST_API_KEY,
+		INGEST_QUEUE: mockQueue,
+	};
 }
 
 function authHeaders() {
@@ -33,7 +65,9 @@ function createIngestAppWithMock(
 	db: ReturnType<typeof drizzle>,
 	opts?: { getEnv?: (c: unknown) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
 ) {
-	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();
+	const app = new Hono<{
+		Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string; INGEST_QUEUE: MockQueue };
+	}>();
 	app.use("/ingest", bearerAuth("divmemory_session"));
 	createIngestRoute(app, db, {
 		getEnv: opts?.getEnv ?? (() => ({ FIREWORKS_API_KEY: TEST_API_KEY })),
@@ -61,6 +95,7 @@ describe("ingest endpoint", () => {
 	beforeEach(() => {
 		testDb = createTestDb();
 		app = createIngestApp(testDb.db);
+		mockQueue.clear();
 	});
 
 	describe("validation", () => {
@@ -634,5 +669,349 @@ describe("truncateConversationFromEnd", () => {
 		const truncated = truncateConversationFromEnd(convo, 10);
 		expect(truncated).toContain("[Conversation truncated for length...]");
 		expect(truncated.endsWith("and stuff")).toBe(true);
+	});
+});
+
+import { processIngestQueue } from "../queue/ingest-consumer";
+
+describe("Queue-Based Ingest Pipeline (TDD)", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	let app: ReturnType<typeof createIngestApp>;
+	const origFetch = globalThis.fetch;
+
+	beforeEach(() => {
+		testDb = createTestDb();
+		app = createIngestApp(testDb.db);
+		mockQueue.clear();
+	});
+
+	afterEach(() => {
+		globalThis.fetch = origFetch;
+	});
+
+	// Helper to mock message and batch for consumer tests
+	const createMockMessage = (body: QueueMessage): Message<QueueMessage> => {
+		let acked = false;
+		let retried = false;
+		return {
+			id: `msg-${Math.random()}`,
+			timestamp: new Date(),
+			body,
+			ack: () => {
+				acked = true;
+			},
+			retry: () => {
+				retried = true;
+			},
+			isAcked: () => acked,
+			isRetried: () => retried,
+		} as unknown as Message<QueueMessage>;
+	};
+
+	const createMockBatch = (messages: Message<QueueMessage>[]): MessageBatch<QueueMessage> => {
+		let retriedAll = false;
+		return {
+			queue: "divmemory-ingest",
+			messages,
+			retryAll: () => {
+				retriedAll = true;
+			},
+			isRetriedAll: () => retriedAll,
+		} as unknown as MessageBatch<QueueMessage>;
+	};
+
+	describe("Producer Endpoint Tests", () => {
+		it("Test 1.1 (Producer Payload Validation): rejects malformed payload with 400 and doesn't enqueue", async () => {
+			const body = { session_id: "", project_id: "proj/test", conversation: "User: hello" };
+			const req = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body),
+			});
+			const res = await app.fetch(req, envVarsWithQueue() as unknown as Record<string, string>);
+			expect(res.status).toBe(400);
+			expect(mockQueue.messages).toHaveLength(0);
+		});
+
+		it("Test 1.2 (Producer Queue Publishing): valid payload inserts session, enqueues {sessionId, projectId}, returns 202 immediately", async () => {
+			const body = {
+				session_id: "sess-prod-12",
+				project_id: "proj/prod-12",
+				conversation: "User: hello queue",
+			};
+			const req = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body),
+			});
+			const res = await app.fetch(req, envVarsWithQueue() as unknown as Record<string, string>);
+			expect(res.status).toBe(202);
+			const json = (await res.json()) as { status: string; session_id: string };
+			expect(json.status).toBe("queued");
+			expect(json.session_id).toBe("sess-prod-12");
+
+			// Check DB contains session in pending state (consolidated = 0, extractionError = null)
+			const sess = testDb.db.select().from(sessions).where(eq(sessions.id, "sess-prod-12")).get();
+			expect(sess).toBeDefined();
+			expect(sess?.rawText).toBe("User: hello queue");
+			expect(sess?.consolidated).toBe(0);
+
+			// Check message is published to the queue
+			expect(mockQueue.messages).toHaveLength(1);
+			expect(mockQueue.messages[0]).toEqual({
+				sessionId: "sess-prod-12",
+				projectId: "proj/prod-12",
+			});
+		});
+
+		it("Test 1.6 (Re-ingestion of Failed Session): duplicate session_id where consolidated = -1 resets extractionError, enqueues and returns success", async () => {
+			const now = new Date().toISOString();
+			// Pre-insert a failed session in DB
+			await testDb.db.insert(projects).values({
+				id: "proj/failed-sess",
+				name: "Failed Project",
+				sessionCount: 1,
+				createdAt: now,
+				lastSeen: now,
+			});
+			await testDb.db.insert(sessions).values({
+				id: "sess-failed-1",
+				projectId: "proj/failed-sess",
+				source: "droid",
+				rawText: "Old broken convo",
+				consolidated: -1,
+				extractionError: "Rate limit hit previously",
+				createdAt: now,
+			});
+
+			const body = {
+				session_id: "sess-failed-1",
+				project_id: "proj/failed-sess",
+				conversation: "User: hello retry",
+			};
+			const req = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body),
+			});
+			const res = await app.fetch(req, envVarsWithQueue() as unknown as Record<string, string>);
+			expect(res.status).toBe(202);
+
+			const sess = testDb.db.select().from(sessions).where(eq(sessions.id, "sess-failed-1")).get();
+			expect(sess?.consolidated).toBe(0);
+			expect(sess?.extractionError).toBeNull();
+			expect(sess?.rawText).toBe("User: hello retry");
+
+			expect(mockQueue.messages).toHaveLength(1);
+			expect(mockQueue.messages[0]).toEqual({
+				sessionId: "sess-failed-1",
+				projectId: "proj/failed-sess",
+			});
+		});
+
+		it("Test 1.7 (Orphaned Sessions Recovery): if queue send() fails, producer deletes session and returns 500", async () => {
+			mockQueue.failNext = true;
+			const body = {
+				session_id: "sess-fail-send",
+				project_id: "proj/fail-send",
+				conversation: "User: will fail queue send",
+			};
+			const req = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body),
+			});
+			const res = await app.fetch(req, envVarsWithQueue() as unknown as Record<string, string>);
+			expect(res.status).toBe(500);
+
+			// DB session should not exist anymore to avoid orphaned state
+			const sess = testDb.db.select().from(sessions).where(eq(sessions.id, "sess-fail-send")).get();
+			expect(sess).toBeUndefined();
+		});
+	});
+
+	describe("Consumer Handler Tests", () => {
+		it("Test 1.3 (Consumer Successful Extraction): processes extraction successfully and sets consolidated = 0", async () => {
+			const now = new Date().toISOString();
+			await testDb.db.insert(projects).values({
+				id: "proj/consumer-success",
+				name: "Success Project",
+				sessionCount: 1,
+				createdAt: now,
+				lastSeen: now,
+			});
+			await testDb.db.insert(sessions).values({
+				id: "sess-consumer-success",
+				projectId: "proj/consumer-success",
+				source: "droid",
+				rawText: "User: hello consumer",
+				consolidated: 0,
+				createdAt: now,
+			});
+
+			// Mock successful Fireworks API response
+			globalThis.fetch = async () =>
+				new Response(
+					JSON.stringify({
+						choices: [
+							{
+								message: {
+									content: JSON.stringify({
+										facts: [
+											{
+												topic: "project_context",
+												content: "Consumer successfully processed.",
+												confidence: 0.9,
+											},
+										],
+									}),
+								},
+							},
+						],
+					}),
+					{ status: 200 },
+				);
+
+			const msg = createMockMessage({
+				sessionId: "sess-consumer-success",
+				projectId: "proj/consumer-success",
+			});
+			const batch = createMockBatch([msg]);
+
+			await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+
+			const sess = testDb.db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.id, "sess-consumer-success"))
+				.get();
+			expect(sess?.consolidated).toBe(0);
+			expect(sess?.extractionError).toBeNull();
+
+			const writtenMemories = testDb.db
+				.select()
+				.from(memories)
+				.where(eq(memories.sourceSession, "sess-consumer-success"))
+				.all();
+			expect(writtenMemories).toHaveLength(1);
+			expect(writtenMemories[0].content).toBe("Consumer successfully processed.");
+		});
+
+		it("Test 1.4 (Consumer Transient Error Auto-Retry): transient error (429) causes consumer to throw", async () => {
+			const now = new Date().toISOString();
+			await testDb.db.insert(projects).values({
+				id: "proj/consumer-transient",
+				name: "Transient Project",
+				sessionCount: 1,
+				createdAt: now,
+				lastSeen: now,
+			});
+			await testDb.db.insert(sessions).values({
+				id: "sess-consumer-transient",
+				projectId: "proj/consumer-transient",
+				source: "droid",
+				rawText: "User: hello transient",
+				consolidated: 0,
+				createdAt: now,
+			});
+
+			// Mock rate limit 429 response
+			globalThis.fetch = async () =>
+				new Response("Rate limit exceeded", {
+					status: 429,
+					statusText: "Too Many Requests",
+				});
+
+			const msg = createMockMessage({
+				sessionId: "sess-consumer-transient",
+				projectId: "proj/consumer-transient",
+			});
+			const batch = createMockBatch([msg]);
+
+			// Expect the consumer to throw the error to allow queue retry
+			await expect(
+				processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" }),
+			).rejects.toThrow(/HTTP 429/);
+
+			const sess = testDb.db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.id, "sess-consumer-transient"))
+				.get();
+			// Session remains pending
+			expect(sess?.consolidated).toBe(0);
+			expect(sess?.extractionError).toBeNull();
+		});
+
+		it("Test 1.5 (Consumer Permanent Error/Failure Cap): parse failure sets consolidated = -1, writes extractionError, and returns normally", async () => {
+			const now = new Date().toISOString();
+			await testDb.db.insert(projects).values({
+				id: "proj/consumer-permanent",
+				name: "Permanent Project",
+				sessionCount: 1,
+				createdAt: now,
+				lastSeen: now,
+			});
+			await testDb.db.insert(sessions).values({
+				id: "sess-consumer-permanent",
+				projectId: "proj/consumer-permanent",
+				source: "droid",
+				rawText: "User: hello permanent",
+				consolidated: 0,
+				createdAt: now,
+			});
+
+			// Mock Fireworks response with invalid LLM output (parse failure)
+			globalThis.fetch = async () =>
+				new Response(
+					JSON.stringify({
+						choices: [
+							{
+								message: {
+									content: "I cannot retrieve any facts from this garbage conversation.",
+								},
+							},
+						],
+					}),
+					{ status: 200 },
+				);
+
+			const msg = createMockMessage({
+				sessionId: "sess-consumer-permanent",
+				projectId: "proj/consumer-permanent",
+			});
+			const batch = createMockBatch([msg]);
+
+			// Should resolve successfully (acknowledge the message) without throwing
+			await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+
+			const sess = testDb.db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.id, "sess-consumer-permanent"))
+				.get();
+			expect(sess?.consolidated).toBe(-1);
+			expect(sess?.extractionError).toBe(
+				"I cannot retrieve any facts from this garbage conversation.",
+			);
+		});
+
+		it("Test 1.8 (Missing Session in Consumer): handles session ID not found in D1, logs warning, returns normally", async () => {
+			const msg = createMockMessage({
+				sessionId: "sess-nonexistent-id",
+				projectId: "proj/nonexistent",
+			});
+			const batch = createMockBatch([msg]);
+
+			// Should resolve successfully without throwing
+			await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+		});
+
+		it("Test 1.9 (Empty Queue Batch in Consumer): handles empty queue batch gracefully and returns normally", async () => {
+			const batch = createMockBatch([]);
+
+			// Should resolve successfully without throwing
+			await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+		});
 	});
 });
