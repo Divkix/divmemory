@@ -13,6 +13,6 @@
 			"~/*": ["./src/*"]
 		}
 	},
-	"include": ["src/**/*", "tests/**/*", "scripts/**/*.d.ts"],
+	"include": ["src/**/*", "tests/**/*", "scripts/**/*.d.ts", "scripts/**/*.d.mts"],
 	"exclude": ["node_modules", "dist"]
 }

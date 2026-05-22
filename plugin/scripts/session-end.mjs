@@ -11,6 +11,8 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { writeProjectMapping } from "./project-mappings.mjs";
+
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 
 /**
@@ -277,6 +279,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(cwd || process.cwd());
+	await writeProjectMapping(resolve(cwd || process.cwd()), projectId);
 
 	let conversation = "";
 	try {

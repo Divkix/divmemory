@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // SessionFile mirrors the type exported from cli.ts
@@ -1682,6 +1682,81 @@ describe("bootstrap cli", () => {
 			});
 			const progress = outputs.find((o) => o.includes("[1/1]"));
 			expect(progress).toBeTruthy();
+		});
+	});
+
+	describe("project path mappings (issue #13)", () => {
+		let mappingsHome: string;
+		const oldDivmemoryHome = process.env.DIVMEMORY_HOME;
+
+		beforeEach(() => {
+			mappingsHome = mkdtempSync(join(tmpdir(), "divmemory-mappings-"));
+			process.env.DIVMEMORY_HOME = mappingsHome;
+		});
+
+		afterEach(() => {
+			if (oldDivmemoryHome === undefined) delete process.env.DIVMEMORY_HOME;
+			else process.env.DIVMEMORY_HOME = oldDivmemoryHome;
+			try {
+				rmSync(mappingsHome, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		});
+
+		it("2.4 uses git remote first, then central mapping, then local hash", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, lookupProjectMapping, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(lookupProjectMapping).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const deletedPath = resolve(mappingsHome, "deleted-worktree");
+			const canonicalId = "github.com/cloudflare/vinext";
+			writeFileSync(getMappingsFilePath(), JSON.stringify({ [deletedPath]: canonicalId }), "utf-8");
+			const fromMapping = await getProjectId(deletedPath);
+			expect(fromMapping).toBe(canonicalId);
+
+			const gitDir = join(mappingsHome, "live-repo");
+			mkdirSync(gitDir);
+			const { execSync } = await import("node:child_process");
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/live-repo.git", {
+				cwd: gitDir,
+			});
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [resolve(gitDir)]: "github.com/stale/wrong" }),
+				"utf-8",
+			);
+			const fromGit = await getProjectId(gitDir);
+			expect(fromGit).toBe("github.com/divkix/live-repo");
+
+			const noGitDir = join(mappingsHome, "orphan");
+			mkdirSync(noGitDir);
+			const fromHash = await getProjectId(noGitDir);
+			expect(fromHash).toMatch(/^local-[a-f0-9]{12}-orphan$/);
+			expect(lookupProjectMapping(resolve(noGitDir))).toBeNull();
+		});
+
+		it("2.5 resolves decoded non-existent path via central mapping", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, decodeProjectDir, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(decodeProjectDir).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const encoded = "-Users-div-worktrees-vinext-earnest";
+			const decoded = decodeProjectDir(encoded);
+			expect(decoded).toBeTruthy();
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [decoded as string]: "github.com/cloudflare/vinext" }),
+				"utf-8",
+			);
+
+			const projectId = await getProjectId(decoded as string);
+			expect(projectId).toBe("github.com/cloudflare/vinext");
 		});
 	});
 

@@ -229,10 +229,35 @@ export function extractConversation(jsonlContent: string): string {
 	return turns.join("\n\n");
 }
 
+export function divmemoryHome(): string {
+	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
+}
+
+export function getMappingsFilePath(): string {
+	return join(divmemoryHome(), "project_mappings.json");
+}
+
+export function lookupProjectMapping(absolutePath: string): string | null {
+	try {
+		const raw = readFileSync(getMappingsFilePath(), "utf-8");
+		const mappings = JSON.parse(raw) as Record<string, string>;
+		const mapped = mappings[absolutePath];
+		return typeof mapped === "string" ? mapped : null;
+	} catch {
+		return null;
+	}
+}
+
+function localProjectId(absolutePath: string): string {
+	const hash = createHash("sha256").update(absolutePath).digest("hex").slice(0, 12);
+	return `local-${hash}-${basename(absolutePath)}`;
+}
+
 export async function getProjectId(cwd: string): Promise<string> {
+	const absolutePath = resolve(cwd || process.cwd());
 	try {
 		const result = await new Promise<string>((resolve, reject) => {
-			const child = spawn("git", ["-C", cwd, "remote", "get-url", "origin"], {
+			const child = spawn("git", ["-C", absolutePath, "remote", "get-url", "origin"], {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let stdout = "";
@@ -258,9 +283,7 @@ export async function getProjectId(cwd: string): Promise<string> {
 		}
 		return normalized;
 	} catch {
-		const absolute = resolve(cwd || process.cwd());
-		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
-		return `local-${hash}-${basename(absolute)}`;
+		return lookupProjectMapping(absolutePath) ?? localProjectId(absolutePath);
 	}
 }
 

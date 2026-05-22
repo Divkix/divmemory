@@ -5,6 +5,8 @@ import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
+import { writeProjectMapping } from "../../../plugin/scripts/project-mappings.mjs";
+
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 
 export async function getProjectId(cwd) {
@@ -327,6 +329,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	await flushQueue(fetch_, url, key, stderr);
 
 	const projectId = await getProjectId(payload.cwd || process.cwd());
+	await writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId);
 	let conversation = "";
 	try {
 		conversation = extractConversation(await readFile(payload.transcript_path, "utf-8"));
