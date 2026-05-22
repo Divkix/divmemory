@@ -21,7 +21,11 @@ export function createStatusRoute(app: any, db?: DbLike) {
 		const projectId = c.req.query("project") as string | undefined;
 
 		if (projectId) {
-			const project = dbCtx.select().from(projects).where(eq(projects.id, projectId)).get() as
+			const project = (await dbCtx
+				.select()
+				.from(projects)
+				.where(eq(projects.id, projectId))
+				.get()) as
 				| {
 						id: string;
 						name: string | null;
@@ -31,27 +35,27 @@ export function createStatusRoute(app: any, db?: DbLike) {
 				  }
 				| undefined;
 
-			const sessionTotal = dbCtx
+			const sessionTotal = (await dbCtx
 				.select({ count: countExpr() })
 				.from(sessions)
 				.where(eq(sessions.projectId, projectId))
-				.get() as { count: number } | undefined;
-			const pending = dbCtx
+				.get()) as { count: number } | undefined;
+			const pending = (await dbCtx
 				.select({ count: countExpr() })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, 0)))
-				.get() as { count: number } | undefined;
-			const errors = dbCtx
+				.get()) as { count: number } | undefined;
+			const errors = (await dbCtx
 				.select({ count: countExpr() })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, -1)))
-				.get() as { count: number } | undefined;
-			const active = dbCtx
+				.get()) as { count: number } | undefined;
+			const active = (await dbCtx
 				.select({ count: countExpr() })
 				.from(memories)
 				.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-				.get() as { count: number } | undefined;
-			const curated = dbCtx
+				.get()) as { count: number } | undefined;
+			const curated = (await dbCtx
 				.select({ count: countExpr() })
 				.from(memories)
 				.where(
@@ -61,13 +65,13 @@ export function createStatusRoute(app: any, db?: DbLike) {
 						eq(memories.curated, 1),
 					),
 				)
-				.get() as { count: number } | undefined;
-			const lastError = dbCtx
+				.get()) as { count: number } | undefined;
+			const lastError = (await dbCtx
 				.select({ error: sessions.extractionError })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, -1)))
 				.orderBy(desc(sessions.createdAt))
-				.get() as { error: string | null } | undefined;
+				.get()) as { error: string | null } | undefined;
 
 			return c.json({
 				project_id: projectId,
@@ -89,27 +93,27 @@ export function createStatusRoute(app: any, db?: DbLike) {
 			});
 		}
 
-		const projectTotal = dbCtx.select({ count: countExpr() }).from(projects).get() as
+		const projectTotal = (await dbCtx.select({ count: countExpr() }).from(projects).get()) as
 			| { count: number }
 			| undefined;
-		const sessionTotal = dbCtx.select({ count: countExpr() }).from(sessions).get() as
+		const sessionTotal = (await dbCtx.select({ count: countExpr() }).from(sessions).get()) as
 			| { count: number }
 			| undefined;
-		const pending = dbCtx
+		const pending = (await dbCtx
 			.select({ count: countExpr() })
 			.from(sessions)
 			.where(eq(sessions.consolidated, 0))
-			.get() as { count: number } | undefined;
-		const errors = dbCtx
+			.get()) as { count: number } | undefined;
+		const errors = (await dbCtx
 			.select({ count: countExpr() })
 			.from(sessions)
 			.where(eq(sessions.consolidated, -1))
-			.get() as { count: number } | undefined;
-		const active = dbCtx
+			.get()) as { count: number } | undefined;
+		const active = (await dbCtx
 			.select({ count: countExpr() })
 			.from(memories)
 			.where(eq(memories.status, "active"))
-			.get() as { count: number } | undefined;
+			.get()) as { count: number } | undefined;
 
 		return c.json({
 			projects: { total: projectTotal?.count ?? 0 },

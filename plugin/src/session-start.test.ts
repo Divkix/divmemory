@@ -19,6 +19,7 @@ describe("session-start hook", () => {
 			DIVMEMORY_WORKER_URL: process.env.DIVMEMORY_WORKER_URL,
 			DIVMEMORY_HOME: process.env.DIVMEMORY_HOME,
 		};
+		process.env.DIVMEMORY_HOME = tmpDir;
 		capturedStderr = [];
 		capturedStdout = [];
 		fetchCalls = [];
@@ -426,7 +427,7 @@ describe("session-start hook", () => {
 			expect(idStart).toBe(idEnd);
 		});
 
-		it("prints cached context immediately and refreshes the cache from the Worker", async () => {
+		it("prints cached context immediately without waiting on the Worker", async () => {
 			process.env.DIVMEMORY_HOME = tmpDir;
 			process.env.DIVMEMORY_API_KEY = "test-key";
 			const projectId = await getProjectId(tmpDir);
@@ -450,9 +451,9 @@ describe("session-start hook", () => {
 			});
 
 			expect(result.exitCode).toBe(0);
-			expect(capturedStdout.join("")).toContain("## divmemory — Fresh");
-			expect(fetchCalls).toHaveLength(1);
-			expect(readFileSync(cachePath, "utf-8")).toContain("## divmemory — Fresh");
+			expect(capturedStdout.join("")).toContain("## divmemory — Cached");
+			expect(fetchCalls).toHaveLength(0);
+			expect(readFileSync(cachePath, "utf-8")).toContain("## divmemory — Cached");
 		});
 
 		it("does not leave a cache file when the Worker returns an error", async () => {

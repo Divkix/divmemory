@@ -35,6 +35,16 @@ app.use("*", async (c, next) => {
 	if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") {
 		return next();
 	}
+	const rawBody = c.req.raw.body;
+	const contentLengthHeader = c.req.header("Content-Length");
+	const hasBody =
+		rawBody !== undefined
+			? rawBody !== null
+			: c.req.header("Transfer-Encoding") !== undefined ||
+				(contentLengthHeader !== undefined && Number(contentLengthHeader || "0") > 0);
+	if (!hasBody) {
+		return next();
+	}
 	const ct = c.req.header("Content-Type") || "";
 	const isWrite =
 		c.req.path === "/ingest" ||

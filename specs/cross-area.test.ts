@@ -563,20 +563,39 @@ describe("Cross-Area — Worker Crash Recovery", () => {
 
 	it("VAL-CROSS-012: Worker timeout, context fetch falls back to empty context", async () => {
 		const { processSessionStart } = await import("../plugin/scripts/session-start.mjs");
+		const tmpDivmemoryHome = mkdtempSync(join(tmpdir(), "cross-012-home-"));
+		const oldDivmemoryHome = process.env.DIVMEMORY_HOME;
+		const oldApiKey = process.env.DIVMEMORY_API_KEY;
 		const capturedStdout: string[] = [];
 		const capturedStderr: string[] = [];
 
-		const timeoutFetch = () => Promise.reject(new Error("AbortError: timeout"));
-		const result = await processSessionStart(
-			JSON.stringify({ session_id: "sess-012", cwd: ".", hook_event_name: "SessionStart" }),
-			{
-				fetch: timeoutFetch,
-				stderr: (s: string) => capturedStderr.push(s),
-				stdout: (s: string) => capturedStdout.push(s),
-			},
-		);
+		try {
+			process.env.DIVMEMORY_HOME = tmpDivmemoryHome;
+			process.env.DIVMEMORY_API_KEY = "test-api-key";
+			const timeoutFetch = () => Promise.reject(new Error("AbortError: timeout"));
+			const result = await processSessionStart(
+				JSON.stringify({ session_id: "sess-012", cwd: ".", hook_event_name: "SessionStart" }),
+				{
+					fetch: timeoutFetch,
+					stderr: (s: string) => capturedStderr.push(s),
+					stdout: (s: string) => capturedStdout.push(s),
+				},
+			);
 
-		expect(result.exitCode).toBe(0);
-		expect(capturedStdout.join("")).toBe("\n");
+			expect(result.exitCode).toBe(0);
+			expect(capturedStdout.join("")).toBe("\n");
+		} finally {
+			if (oldDivmemoryHome === undefined) {
+				delete process.env.DIVMEMORY_HOME;
+			} else {
+				process.env.DIVMEMORY_HOME = oldDivmemoryHome;
+			}
+			if (oldApiKey === undefined) {
+				delete process.env.DIVMEMORY_API_KEY;
+			} else {
+				process.env.DIVMEMORY_API_KEY = oldApiKey;
+			}
+			rmSync(tmpDivmemoryHome, { recursive: true, force: true });
+		}
 	});
 });

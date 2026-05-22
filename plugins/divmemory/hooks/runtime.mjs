@@ -247,6 +247,10 @@ export async function processSessionStart(stdinData, deps = {}) {
 		stdout(cached.trim() ? `${cached.trimEnd()}\n` : "\n");
 		return { exitCode: 0 };
 	}
+	if (cached.trim()) {
+		stdout(`${cached.trimEnd()}\n`);
+		return { exitCode: 0 };
+	}
 
 	const url = `${workerUrl()}/context?project=${encodeURIComponent(projectId)}&max_chars=12000`;
 	try {

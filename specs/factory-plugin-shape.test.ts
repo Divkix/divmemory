@@ -64,7 +64,7 @@ describe("Factory marketplace plugin shape", () => {
 		const sessionStart = hooks.hooks?.SessionStart?.[0]?.hooks?.[0];
 		const sessionEnd = hooks.hooks?.SessionEnd?.[0]?.hooks?.[0];
 		expect(sessionStart).toMatchObject({ type: "command", async: false });
-		expect(sessionStart?.command).toContain("hooks/session-start.mjs");
+		expect(sessionStart?.command).toContain("hooks/session-start-fast.sh");
 		expect(sessionEnd).toMatchObject({ type: "command", async: false });
 		expect(sessionEnd?.command).toContain("hooks/session-end.mjs");
 	});
@@ -82,9 +82,18 @@ describe("Factory marketplace plugin shape", () => {
 	it("keeps marketplace hook scripts self-contained inside plugins/divmemory", () => {
 		const startScript = readFileSync(join(pluginRoot, "hooks", "session-start.mjs"), "utf-8");
 		const endScript = readFileSync(join(pluginRoot, "hooks", "session-end.mjs"), "utf-8");
+		const startFastScript = readFileSync(
+			join(pluginRoot, "hooks", "session-start-fast.sh"),
+			"utf-8",
+		);
 		expect(startScript).not.toContain("../../../plugin/");
 		expect(endScript).not.toContain("../../../plugin/");
+		expect(startFastScript).not.toContain("../../../plugin/");
 		expect(startScript).toContain("./runtime.mjs");
 		expect(endScript).toContain("./runtime.mjs");
+		expect(startFastScript).toContain("session-start.mjs");
+		expect(startFastScript).toContain("JSON.parse");
+		expect(startFastScript).toContain("encodeURIComponent");
+		expect(startFastScript).toContain("failed to encode project cache key");
 	});
 });

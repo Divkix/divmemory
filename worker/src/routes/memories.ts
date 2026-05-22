@@ -264,14 +264,14 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		}
 
 		// Check if memory exists
-		const existing = dbCtx.select().from(memories).where(eq(memories.id, id)).get() as
+		const existing = (await dbCtx.select().from(memories).where(eq(memories.id, id)).get()) as
 			| { id: string }
 			| undefined;
 		if (!existing) {
 			return c.json({ error: "Memory not found" }, 404);
 		}
 
-		dbCtx.update(memories).set(set).where(eq(memories.id, id)).run();
+		await dbCtx.update(memories).set(set).where(eq(memories.id, id)).run();
 
 		return c.json({ ok: true }, 200);
 	});
@@ -281,7 +281,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const dbCtx = db || getDb(c);
 		const id = c.req.param("id") as string;
 
-		const row = dbCtx.select().from(memories).where(eq(memories.id, id)).get() as
+		const row = (await dbCtx.select().from(memories).where(eq(memories.id, id)).get()) as
 			| { id: string; curated: number; status: string }
 			| undefined;
 
@@ -296,7 +296,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 
 		if (row.curated === 1) {
 			// Soft-archive curated facts
-			dbCtx
+			await dbCtx
 				.update(memories)
 				.set({ status: "archived", updatedAt: nowISO() })
 				.where(eq(memories.id, id))
@@ -305,7 +305,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		}
 
 		// Hard-delete auto-extracted (curated=0) regardless of current status
-		dbCtx.delete(memories).where(eq(memories.id, id)).run();
+		await dbCtx.delete(memories).where(eq(memories.id, id)).run();
 		return c.json({ ok: true }, 200);
 	});
 }

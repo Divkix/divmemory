@@ -152,6 +152,13 @@ export async function processSessionStart(stdinData, deps = {}) {
 		return { exitCode: 0 };
 	}
 
+	// Droid currently injects only one SessionStart hook output; keep this hook fast when
+	// cache exists so memory context is not displaced by other startup hooks.
+	if (cached.trim()) {
+		stdout(`${cached.trimEnd()}\n`);
+		return { exitCode: 0 };
+	}
+
 	const maxChars = 12000;
 	const encoded = encodeURIComponent(projectId);
 	const url = `${WORKER_URL}/context?project=${encoded}&max_chars=${maxChars}`;
