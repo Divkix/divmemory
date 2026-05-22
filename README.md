@@ -321,60 +321,176 @@ curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
 
 ## Deployment
 
+This project deploys to **Cloudflare Workers** with a **D1 SQLite database**. The daily cron job (3am UTC memory consolidation) is already declared in [`worker/wrangler.jsonc`](./worker/wrangler.jsonc) and deploys automatically with the Worker.
+
+### Prerequisites
+
+- **Cloudflare account** with Workers and D1 enabled (free tier is sufficient)
+- **Bun** >= 1.3 (`curl -fsSL https://bun.sh/install | bash`)
+- **Wrangler CLI** — installed via this repo's dependencies, or globally via `npm install -g wrangler`
+- Logged in to Wrangler: `npx wrangler login`
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/divkix/divmemory.git
+cd divmemory
+bun install
+```
+
+### 2. Create the D1 database
+
 ```bash
 cd worker
-
-# Create D1 database (first time)
 npx wrangler d1 create divmemory-db
 ```
 
-Copy the printed `database_id` into `worker/wrangler.jsonc`, replacing the checked-in example value.
+Wrangler prints a `database_id` (UUID). **Copy that value** and paste it into `worker/wrangler.jsonc`, replacing the placeholder `database_id`:
+
+```jsonc
+{
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "divmemory-db",
+      "database_id": "<paste-your-uuid-here>"
+    }
+  ]
+}
+```
+
+> **Why this step matters:** The checked-in `database_id` is a placeholder. You must use the real ID of the database in your Cloudflare account, otherwise the Worker cannot connect to D1 after deployment.
+
+### 3. Apply database migrations
+
+D1 does not run migrations automatically. Apply every `.sql` file in `worker/drizzle/` in numeric order:
 
 ```bash
-# Apply migrations
+cd worker
+
+# For a fresh database, apply all migrations:
 npx wrangler d1 execute divmemory-db --remote --file=./drizzle/0000_giant_tyrannus.sql
 npx wrangler d1 execute divmemory-db --remote --file=./drizzle/0001_sloppy_punisher.sql
+```
 
-# Set secrets
+> **Tip:** If you're updating an existing deployment later, only apply new files your database has not yet received. Check the `drizzle/meta/` journal or query D1 directly to see what's already applied.
+
+### 4. Set Worker secrets
+
+These values are encrypted and stored in Cloudflare's edge:
+
+```bash
+cd worker
+
+# Auth token for the Worker API (used by plugin + CLI)
 npx wrangler secret put DIVMEMORY_API_KEY
-npx wrangler secret put FIREWORKS_API_KEY
-npx wrangler secret put DIVMEMORY_WEB_PASSWORD
 
-# Deploy
+# Fireworks AI key for Firepass fact extraction
+npx wrangler secret put FIREWORKS_API_KEY
+
+# Password for the web UI login page
+npx wrangler secret put DIVMEMORY_WEB_PASSWORD
+```
+
+| Secret | Required | What to enter when prompted |
+|---|---|---|
+| `DIVMEMORY_API_KEY` | **Yes** | A long random string. Generate with `openssl rand -hex 32`. Use the same value on every laptop running the Droid plugin. |
+| `FIREWORKS_API_KEY` | **Yes** | Your [Fireworks AI](https://fireworks.ai) API key. A Firepass subscription is required for extraction. |
+| `DIVMEMORY_WEB_PASSWORD` | **Yes** | Any password you want for the web UI. |
+
+### 5. Deploy the Worker
+
+```bash
+cd worker
 bun run deploy
 ```
 
-The Worker runs a daily cron at 3am UTC for automatic memory consolidation.
+Wrangler will bundle, upload, and print the live Worker URL, for example:
 
-After deploy, Wrangler prints the Worker URL. Put that URL into `DIVMEMORY_WORKER_URL` on every machine using the Droid plugin.
+```
+https://divmemory.<your-subdomain>.workers.dev
+```
 
-### Updating an existing deployment
+### 6. Configure the Droid plugin
 
-When pulling a new version:
+On every machine that should read/write memory, export these environment variables (add to your shell profile):
 
 ```bash
+export DIVMEMORY_API_KEY="<same token you set in Step 4>"
+export DIVMEMORY_WORKER_URL="https://divmemory.<your-subdomain>.workers.dev"
+```
+
+Then install the plugin (run once per machine):
+
+```bash
+droid plugin marketplace add https://github.com/divkix/divmemory
+droid plugin install divmemory@divmemory --scope user
+```
+
+### First-deploy smoke test
+
+After Steps 1-5, verify the stack end-to-end:
+
+```bash
+export DIVMEMORY_API_KEY="<your token>"
+export DIVMEMORY_WORKER_URL="https://divmemory.<your-subdomain>.workers.dev"
+
+# 1. Worker health
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/status"
+
+# 2. Add a manual memory
+curl -X POST "$DIVMEMORY_WORKER_URL/memories" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"smoke-test","topic":"preferences","content":"Smoke test passed."}'
+
+# 3. Read it back as formatted context
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/context?project=smoke-test"
+```
+
+If all three return JSON (not 401/500), your deployment is live. Open the root URL in a browser and log in with `DIVMEMORY_WEB_PASSWORD` to view the web UI.
+
+### Updating a live deployment
+
+Pull the latest code, reinstall, and redeploy:
+
+```bash
+git pull
 bun install
 cd worker
 bun run deploy
 ```
 
-If the release includes new SQL files under `worker/drizzle/`, apply only the new files that your database has not already received. For this release, a fresh install needs both checked-in SQL files:
+If new SQL migrations were added, apply **only the new files** before redeploying:
 
 ```bash
-npx wrangler d1 execute divmemory-db --remote --file=./drizzle/0000_giant_tyrannus.sql
-npx wrangler d1 execute divmemory-db --remote --file=./drizzle/0001_sloppy_punisher.sql
+cd worker
+npx wrangler d1 execute divmemory-db --remote --file=./drizzle/000X_new_file.sql
+bun run deploy
 ```
 
 ### Backup and recovery
 
-Before risky changes, export D1 data through Wrangler:
+Before risky changes, export your D1 data:
 
 ```bash
 cd worker
 npx wrangler d1 export divmemory-db --remote --output=divmemory-backup.sql
 ```
 
-Keep this backup outside the repo. The app stores durable memory in D1; the local `~/.divmemory/cache` and `queue.jsonl` files are convenience state, not your source of truth.
+Store the `.sql` file outside the repo. The local `~/.divmemory/cache` and `queue.jsonl` files are convenience state only — **D1 is the source of truth**.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `500` on first request | D1 not connected | Double-check `database_id` in `wrangler.jsonc` matches your real database. |
+| `401 Unauthorized` | Wrong `DIVMEMORY_API_KEY` | Verify the secret in Wrangler matches your shell env var. Secrets are case-sensitive. |
+| Migrations fail | SQL already applied | Skip files already run. Check `drizzle/meta/` for a journal of applied migrations. |
+| Worker deploy hangs | Not logged in | Run `npx wrangler login` and try again. |
+| Firepass extraction fails | Missing or invalid `FIREWORKS_API_KEY` | Verify the key is active and has Firepass quota. CheckWorker logs via `npx wrangler tail`. |
 
 ## Bootstrap CLI
 
