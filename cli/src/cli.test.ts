@@ -1713,7 +1713,9 @@ describe("bootstrap cli", () => {
 
 			const deletedPath = resolve(mappingsHome, "deleted-worktree");
 			const canonicalId = "github.com/cloudflare/vinext";
-			writeFileSync(getMappingsFilePath(), JSON.stringify({ [deletedPath]: canonicalId }), "utf-8");
+			const mapping = { [deletedPath]: canonicalId };
+			const payload = JSON.stringify(mapping);
+			writeFileSync(getMappingsFilePath(), payload, "utf-8");
 			const fromMapping = await getProjectId(deletedPath);
 			expect(fromMapping).toBe(canonicalId);
 

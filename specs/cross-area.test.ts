@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
@@ -590,7 +590,7 @@ describe("Cross-Area — Project path mappings", () => {
 			await pendingMappingWrites(tmpHome);
 
 			const absolutePath = resolve(gitDir);
-			rmdirSync(gitDir, { recursive: true });
+			rmSync(gitDir, { recursive: true, force: true });
 
 			const projectId = await getProjectId(absolutePath);
 			expect(projectId).toBe("github.com/cloudflare/vinext");
