@@ -11,7 +11,14 @@ import { dirname, join, resolve } from "node:path";
 
 import { getProjectId, writeProjectMapping } from "./project-mappings.mjs";
 
-export { getProjectId };
+export {
+	divmemoryHome,
+	getProjectId,
+	lookupProjectMapping,
+	mappingsPath,
+	resolveProjectId,
+	writeProjectMapping,
+} from "./project-mappings.mjs";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 
@@ -231,9 +238,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 
 	const projectId = await getProjectId(cwd || process.cwd());
 	try {
-		writeProjectMapping(resolve(cwd || process.cwd()), projectId).catch((err) => {
-			stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
-		});
+		await writeProjectMapping(resolve(cwd || process.cwd()), projectId);
 	} catch (err) {
 		stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
 	}

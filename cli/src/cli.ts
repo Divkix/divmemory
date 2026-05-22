@@ -141,7 +141,6 @@ export function decodeProjectDir(encoded: string): string | null {
 	const rest = encoded.slice(1);
 	const dashCount = (rest.match(/-/g) || []).length;
 
-	// Ambiguity: dashes could be original directory names or encoded slashes.
 	// Try all combinations of treating each dash as either "/" or "-".
 	// Start with the assumption that ALL dashes were originally slashes (most common case for paths),
 	// then progressively try fewer replacements from the right, checking which decoded path exists.
@@ -162,7 +161,23 @@ export function decodeProjectDir(encoded: string): string | null {
 		}
 	}
 
-	// If no decoded path exists on disk, return the fully-decoded path anyway
+	// Consult central mapping for candidates with literal dashes (k < dashCount)
+	for (let k = dashCount - 1; k >= 0; k--) {
+		const dashPositions: number[] = [];
+		for (let i = 0; i < rest.length; i++) {
+			if (rest[i] === "-") dashPositions.push(i);
+		}
+		const chars = rest.split("");
+		for (let i = 0; i < k; i++) {
+			chars[dashPositions[i]] = "/";
+		}
+		const attempt = `/${chars.join("")}`;
+		if (lookupProjectMapping(attempt)) {
+			return attempt;
+		}
+	}
+
+	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
 	// (the caller will fall back to basename if git remote doesn't work).
 	return `/${rest.replace(/-/g, "/")}`;
 }

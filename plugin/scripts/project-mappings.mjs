@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -25,10 +25,15 @@ async function withMappingFileLock(home, fn) {
 	const lockPath = mappingLockPath(home);
 	await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 }).catch(() => {});
 
+	const LOCK_STALE_MS = 10000;
+
 	for (let attempt = 0; attempt < LOCK_RETRIES; attempt++) {
 		let handle;
 		try {
 			handle = await open(lockPath, "wx");
+			// Write metadata (pid and timestamp)
+			const metadata = JSON.stringify({ pid: process.pid, timestamp: Date.now() });
+			await handle.writeFile(metadata, "utf-8");
 			try {
 				return await fn();
 			} finally {
@@ -37,6 +42,41 @@ async function withMappingFileLock(home, fn) {
 			}
 		} catch (err) {
 			if (err?.code !== "EEXIST") throw err;
+
+			// Inspect the existing lock
+			let isStale = false;
+			try {
+				const content = await readFile(lockPath, "utf-8").catch(() => null);
+				if (content) {
+					const info = JSON.parse(content);
+					const age = Date.now() - info.timestamp;
+					let pidExists = true;
+					try {
+						process.kill(info.pid, 0);
+					} catch {
+						pidExists = false;
+					}
+					if (age > LOCK_STALE_MS || !pidExists) {
+						isStale = true;
+					}
+				} else {
+					const st = await stat(lockPath).catch(() => null);
+					if (st && Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+						isStale = true;
+					}
+				}
+			} catch {
+				const st = await stat(lockPath).catch(() => null);
+				if (st && Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+					isStale = true;
+				}
+			}
+
+			if (isStale) {
+				await unlink(lockPath).catch(() => {});
+				continue;
+			}
+
 			await new Promise((r) => setTimeout(r, LOCK_BASE_DELAY_MS * (attempt + 1)));
 		}
 	}
@@ -50,7 +90,11 @@ export function lookupProjectMapping(absolutePath, options = {}) {
 		if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
 			return null;
 		}
-		const mapped = mappings[absolutePath];
+		let mapped = mappings[absolutePath];
+		if (typeof mapped !== "string" && absolutePath.startsWith("/")) {
+			const encodedKey = "-" + absolutePath.slice(1).replace(/\//g, "-");
+			mapped = mappings[encodedKey];
+		}
 		return typeof mapped === "string" ? mapped : null;
 	} catch {
 		return null;
@@ -98,6 +142,26 @@ export async function resolveProjectId(cwd, options = {}) {
 		});
 		return normalizeGitRemote(result);
 	} catch {
+		if (absolutePath.startsWith("/")) {
+			const encoded = "-" + absolutePath.slice(1).replace(/\//g, "-");
+			const rest = encoded.slice(1);
+			const dashCount = (rest.match(/-/g) || []).length;
+			for (let k = dashCount - 1; k >= 0; k--) {
+				const dashPositions = [];
+				for (let i = 0; i < rest.length; i++) {
+					if (rest[i] === "-") dashPositions.push(i);
+				}
+				const chars = rest.split("");
+				for (let i = 0; i < k; i++) {
+					chars[dashPositions[i]] = "/";
+				}
+				const candidate = `/${chars.join("")}`;
+				const mapping = lookupProjectMapping(candidate, options);
+				if (mapping) {
+					return mapping;
+				}
+			}
+		}
 		return lookupProjectMapping(absolutePath, options) ?? localProjectId(absolutePath);
 	}
 }

@@ -283,6 +283,13 @@ export async function processSessionEnd(stdinData, deps = {}) {
 		return { exitCode: 0 };
 	}
 
+	const projectId = await getProjectId(payload.cwd || process.cwd());
+	try {
+		await writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId);
+	} catch (err) {
+		stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
+	}
+
 	const key = apiKey();
 	if (!key) {
 		stderr("[divmemory] DIVMEMORY_API_KEY not set. Skipping ingestion.");
@@ -290,15 +297,6 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 	const url = workerUrl();
 	await flushQueue(fetch_, url, key, stderr);
-
-	const projectId = await getProjectId(payload.cwd || process.cwd());
-	try {
-		writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId).catch((err) => {
-			stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
-		});
-	} catch (err) {
-		stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
-	}
 	let conversation = "";
 	try {
 		conversation = extractConversation(await readFile(payload.transcript_path, "utf-8"));

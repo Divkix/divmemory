@@ -1747,13 +1747,15 @@ describe("bootstrap cli", () => {
 			expect(getMappingsFilePath).toBeDefined();
 
 			const encoded = "-Users-div-worktrees-vinext-earnest";
-			const decoded = decodeProjectDir(encoded);
-			expect(decoded).toBeTruthy();
+			// Write the mapping using the encoded key so that decodeProjectDir must recover the path
 			writeFileSync(
 				getMappingsFilePath(),
-				JSON.stringify({ [decoded as string]: "github.com/cloudflare/vinext" }),
+				JSON.stringify({ [encoded]: "github.com/cloudflare/vinext" }),
 				"utf-8",
 			);
+
+			const decoded = decodeProjectDir(encoded);
+			expect(decoded).toBeTruthy();
 
 			const projectId = await getProjectId(decoded as string);
 			expect(projectId).toBe("github.com/cloudflare/vinext");

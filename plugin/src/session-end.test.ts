@@ -1002,7 +1002,27 @@ describe("session-end hook", () => {
 				},
 			);
 
+			await pendingMappingWrites(tmpDir);
+
 			const mappingsFile = join(tmpDir, "project_mappings.json");
+			// Poll/wait for mapping persistence to settle
+			let lastContent = "";
+			const pollStart = Date.now();
+			while (Date.now() - pollStart < 200) {
+				try {
+					if (existsSync(mappingsFile)) {
+						const current = readFileSync(mappingsFile, "utf-8");
+						if (current === lastContent && current !== "") {
+							break;
+						}
+						lastContent = current;
+					}
+				} catch {
+					// ignore
+				}
+				await new Promise((r) => setTimeout(r, 10));
+			}
+
 			if (existsSync(mappingsFile)) {
 				const mappings = JSON.parse(readFileSync(mappingsFile, "utf-8")) as Record<string, string>;
 				expect(mappings[resolve(noGitDir)]).toBeUndefined();
