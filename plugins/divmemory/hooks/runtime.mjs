@@ -161,23 +161,33 @@ export function extractConversation(jsonlContent) {
 		} catch {
 			continue;
 		}
+		let targetMsg = msg;
+		if (msg.type === "message" && msg.message && typeof msg.message === "object") {
+			targetMsg = msg.message;
+		}
+
+		if (msg.visibility === "llm_only" || targetMsg.visibility === "llm_only") {
+			continue;
+		}
+
+		const type = targetMsg.type;
 		if (
-			msg.type === "system-reminder" ||
-			msg.type === "system-notification" ||
-			msg.type === "thinking" ||
-			msg.type === "tool_use" ||
-			msg.type === "tool_result"
+			type === "system-reminder" ||
+			type === "system-notification" ||
+			type === "thinking" ||
+			type === "tool_use" ||
+			type === "tool_result"
 		) {
 			continue;
 		}
-		const role = msg.role || msg.type;
+		const role = targetMsg.role || type;
 		if (role !== "user" && role !== "assistant") continue;
 
 		let text = "";
-		if (typeof msg.content === "string") {
-			text = msg.content;
-		} else if (Array.isArray(msg.content)) {
-			text = msg.content
+		if (typeof targetMsg.content === "string") {
+			text = targetMsg.content;
+		} else if (Array.isArray(targetMsg.content)) {
+			text = targetMsg.content
 				.filter((c) => c?.type === "text")
 				.map((c) => c.text || "")
 				.join("\n");

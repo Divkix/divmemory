@@ -179,20 +179,29 @@ export function extractConversation(jsonlContent: string): string {
 			continue;
 		}
 
-		const type = msg.type as string | undefined;
+		let targetMsg = msg;
+		if (msg.type === "message" && msg.message && typeof msg.message === "object") {
+			targetMsg = msg.message as Record<string, unknown>;
+		}
+
+		if (msg.visibility === "llm_only" || targetMsg.visibility === "llm_only") {
+			continue;
+		}
+
+		const type = targetMsg.type as string | undefined;
 		if (type === "system-reminder" || type === "system-notification") continue;
 		if (type === "thinking") continue;
 		if (type === "tool_use") continue;
 		if (type === "tool_result") continue;
 
-		const role = (msg.role as string | undefined) || type;
+		const role = (targetMsg.role as string | undefined) || type;
 		if (role !== "user" && role !== "assistant") continue;
 
 		let text = "";
-		if (typeof msg.content === "string") {
-			text = msg.content;
-		} else if (Array.isArray(msg.content)) {
-			text = (msg.content as Array<{ type?: string; text?: string }>)
+		if (typeof targetMsg.content === "string") {
+			text = targetMsg.content;
+		} else if (Array.isArray(targetMsg.content)) {
+			text = (targetMsg.content as Array<{ type?: string; text?: string }>)
 				.filter((c) => c?.type === "text")
 				.map((c) => c.text || "")
 				.join("\n");

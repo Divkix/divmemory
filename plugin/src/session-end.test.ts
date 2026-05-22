@@ -438,6 +438,64 @@ describe("session-end hook", () => {
 			const conv = extractConversation(jsonl);
 			expect(conv).toBe("User: A\n\nAssistant: B\n\nUser: C");
 		});
+
+		it("supports nested message structures (VAL-PLUGIN-007/008)", () => {
+			const jsonl = [
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "user",
+						content: [{ type: "text", text: "nested user greeting" }],
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "thinking", thinking: "nested thought" },
+							{ type: "text", text: "nested assistant reply" },
+						],
+					},
+				}),
+			].join("\n");
+			const conv = extractConversation(jsonl);
+			expect(conv).toContain("User: nested user greeting");
+			expect(conv).toContain("Assistant: nested assistant reply");
+			expect(conv).not.toContain("nested thought");
+		});
+
+		it("skips messages with visibility set to llm_only (VAL-PLUGIN-007/008)", () => {
+			const jsonl = [
+				JSON.stringify({
+					type: "message",
+					visibility: "llm_only",
+					message: {
+						role: "user",
+						content: [{ type: "text", text: "this should be skipped outer" }],
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "user",
+						visibility: "llm_only",
+						content: [{ type: "text", text: "this should be skipped inner" }],
+					},
+				}),
+				JSON.stringify({
+					type: "message",
+					message: {
+						role: "user",
+						content: [{ type: "text", text: "keep this message" }],
+					},
+				}),
+			].join("\n");
+			const conv = extractConversation(jsonl);
+			expect(conv).toContain("User: keep this message");
+			expect(conv).not.toContain("this should be skipped outer");
+			expect(conv).not.toContain("this should be skipped inner");
+		});
 	});
 
 	// ============================================================
