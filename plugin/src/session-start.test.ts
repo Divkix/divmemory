@@ -170,6 +170,16 @@ describe("session-start hook", () => {
 			expect(id).toBe("github.com/divkix/my-app");
 		});
 
+		it("normalizes protocol-prefixed SSH remote URL consistently", async () => {
+			const gitDir = join(tmpDir, "ssh-proto-repo");
+			const { execSync } = await import("node:child_process");
+			execSync(
+				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin ssh://git@github.com/divkix/my-app.git`,
+			);
+			const id = await getProjectId(gitDir);
+			expect(id).toBe("github.com/divkix/my-app");
+		});
+
 		it("strips .git suffix from remote URL", async () => {
 			const gitDir = join(tmpDir, "with-git");
 			const { execSync } = await import("node:child_process");

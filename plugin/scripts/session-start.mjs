@@ -42,19 +42,19 @@ export async function getProjectId(cwd) {
 			});
 		});
 
-		// Normalize: strip .git suffix, trailing slashes, and lowercase
-		let normalized = result
-			.replace(/\.git$/, "")
-			.replace(/\/+$/, "")
-			.toLowerCase();
+		// Normalize: strip .git suffix and trailing slashes
+		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
+
+		// Lowercase the string
+		normalized = normalized.toLowerCase();
+
+		// Strip protocol (https://, ssh://, etc.)
+		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 
 		// Convert SSH "git@host:path" to "host/path"
 		if (normalized.startsWith("git@")) {
 			normalized = normalized.replace(/^git@/, "").replace(":", "/");
 		}
-
-		// Strip protocol (https://, ssh://, etc.)
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 
 		return normalized;
 	} catch {

@@ -241,14 +241,12 @@ export async function getProjectId(cwd: string): Promise<string> {
 			});
 		});
 
-		let normalized = result
-			.replace(/\.git$/, "")
-			.replace(/\/+$/, "")
-			.toLowerCase();
+		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
+		normalized = normalized.toLowerCase();
+		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 		if (normalized.startsWith("git@")) {
 			normalized = normalized.replace(/^git@/, "").replace(":", "/");
 		}
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 		return normalized;
 	} catch {
 		const absolute = resolve(cwd || process.cwd());

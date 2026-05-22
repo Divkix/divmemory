@@ -29,14 +29,13 @@ export async function getProjectId(cwd) {
 			});
 		});
 
-		let normalized = result
-			.replace(/\.git$/, "")
-			.replace(/\/+$/, "")
-			.toLowerCase();
+		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
+		normalized = normalized.toLowerCase();
+		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 		if (normalized.startsWith("git@")) {
 			normalized = normalized.replace(/^git@/, "").replace(":", "/");
 		}
-		return normalized.replace(/^[a-z]+:\/\//, "");
+		return normalized;
 	} catch {
 		const absolute = resolve(projectCwd);
 		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);

@@ -16,12 +16,16 @@ if [ -n "$remote" ]; then
 	project=$(printf '%s' "$remote" \
 		| sed 's/\.git$//; s:/*$::' \
 		| tr '[:upper:]' '[:lower:]' \
-		| sed 's#^git://##; s#^ssh://##; s#^http://##; s#^https://##')
+		| sed -E 's#^[a-z]+://##')
 	case "$project" in
 		git@*) project=$(printf '%s' "$project" | sed 's/^git@//; s/:/\//') ;;
 	esac
 else
-	project=""
+	# Fallback: local-<hash>-<basename> (match Node implementation)
+	abs_path=$(cd "$cwd" && pwd)
+	hash=$(printf '%s' "$abs_path" | shasum -a 256 | cut -c1-12)
+	basename=$(basename "$abs_path")
+	project="local-${hash}-${basename}"
 fi
 
 if [ -n "$project" ]; then
