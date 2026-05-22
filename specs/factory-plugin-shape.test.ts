@@ -6,6 +6,39 @@ const root = process.cwd();
 const pluginRoot = join(root, "plugins", "divmemory");
 
 describe("Factory marketplace plugin shape", () => {
+	it("exposes a root marketplace manifest for Droid marketplace add", () => {
+		for (const metadataDir of [".factory-plugin", ".claude-plugin"]) {
+			const marketplacePath = join(root, metadataDir, "marketplace.json");
+			expect(existsSync(marketplacePath)).toBe(true);
+
+			const marketplace = JSON.parse(readFileSync(marketplacePath, "utf-8")) as {
+				name?: string;
+				description?: string;
+				plugins?: Array<{
+					name?: string;
+					description?: string;
+					version?: string;
+					source?: string;
+					category?: string;
+				}>;
+			};
+			const plugin = marketplace.plugins?.find((entry) => entry.name === "divmemory");
+			expect(plugin).toBeDefined();
+
+			expect(marketplace.name).toBe("divmemory");
+			expect(marketplace.description).toContain("Persistent");
+			expect(plugin).toMatchObject({
+				name: "divmemory",
+				source: "./plugins/divmemory",
+				category: "productivity",
+			});
+			expect(plugin?.version).toMatch(/^\d+\.\d+\.\d+/);
+			expect(existsSync(join(root, plugin?.source ?? "", ".factory-plugin", "plugin.json"))).toBe(
+				true,
+			);
+		}
+	});
+
 	it("exposes divmemory under plugins/divmemory with .factory-plugin metadata", () => {
 		const manifestPath = join(pluginRoot, ".factory-plugin", "plugin.json");
 		expect(existsSync(manifestPath)).toBe(true);
