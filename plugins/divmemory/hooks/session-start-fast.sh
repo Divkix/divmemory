@@ -23,7 +23,12 @@ if [ -n "$remote" ]; then
 else
 	# Fallback: local-<hash>-<basename> (match Node implementation)
 	abs_path=$(cd "$cwd" && pwd)
-	hash=$(printf '%s' "$abs_path" | shasum -a 256 | cut -c1-12)
+	hash=$(printf '%s' "$abs_path" | sha256sum)
+	if [ $? -ne 0 ] || [ -z "$hash" ]; then
+		printf '%s\n' "[divmemory] failed to compute sha256 hash of project path." >&2
+		exit 1
+	fi
+	hash=$(printf '%s' "$hash" | cut -c1-12)
 	basename=$(basename "$abs_path")
 	project="local-${hash}-${basename}"
 fi
