@@ -1,0 +1,19 @@
+{
+	"name": "divmemory",
+	"description": "Persistent cross-session memory for Droid, backed by your own Cloudflare Worker stack.",
+	"owner": {
+		"name": "divkix"
+	},
+	"plugins": [
+		{
+			"name": "divmemory",
+			"description": "Persistent cross-session memory for Droid, backed by your own Cloudflare Worker stack.",
+			"version": "1.0.0",
+			"source": "./plugins/divmemory",
+			"category": "productivity",
+			"author": {
+				"name": "divkix"
+			}
+		}
+	]
+}
