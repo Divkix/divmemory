@@ -171,8 +171,6 @@ export function decodeProjectDir(encoded: string): string | null {
 			if (encodedKey === rest) {
 				return key;
 			}
-		} else if (key === encoded) {
-			return key;
 		}
 	}
 

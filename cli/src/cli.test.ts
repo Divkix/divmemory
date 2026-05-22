@@ -1764,6 +1764,31 @@ describe("bootstrap cli", () => {
 			expect(projectId).toBe("github.com/cloudflare/vinext");
 		});
 
+		it("2.5.b resolves legacy relative mapped keys correctly by falling through to absolute resolution", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, decodeProjectDir, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(decodeProjectDir).toBeDefined();
+
+			const legacyKey = "-Users-me-my-app";
+			const absolutePath = "/Users/me/my/app";
+			// Write a legacy mapping where the key is the raw encoded string (e.g. "-Users-me-my-app")
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [legacyKey]: "github.com/me/my-app" }),
+				"utf-8",
+			);
+
+			// decodeProjectDir should now fall through to return the absolute-path version "/Users/me/my/app"
+			const decoded = decodeProjectDir(legacyKey);
+			expect(decoded).toBe(absolutePath);
+
+			// getProjectId resolves it correctly as "github.com/me/my-app" by checking absolutePath.startsWith("/")
+			// and mapping key === encoded inside resolveProjectId
+			const projectId = await getProjectId(decoded as string);
+			expect(projectId).toBe("github.com/me/my-app");
+		});
+
 		it("2.6 verifies writeProjectMapping/lookupProjectMapping for absolute-path keys", async () => {
 			const mod = await loadCliModule();
 			const { getProjectId, lookupProjectMapping } = mod;
