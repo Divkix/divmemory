@@ -23,12 +23,11 @@ if [ -n "$remote" ]; then
 else
 	# Fallback: local-<hash>-<basename> (match Node implementation)
 	abs_path=$(cd "$cwd" && pwd)
-	hash=$(printf '%s' "$abs_path" | sha256sum)
+	hash=$(node -e 'const { createHash } = require("node:crypto"); process.stdout.write(createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12));' "$abs_path")
 	if [ $? -ne 0 ] || [ -z "$hash" ]; then
 		printf '%s\n' "[divmemory] failed to compute sha256 hash of project path." >&2
 		exit 1
 	fi
-	hash=$(printf '%s' "$hash" | cut -c1-12)
 	basename=$(basename "$abs_path")
 	project="local-${hash}-${basename}"
 fi
