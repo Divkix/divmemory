@@ -333,8 +333,7 @@ export function createIngestRoute(
 	// biome-ignore lint/suspicious/noExplicitAny: Hono generic typing is too restrictive for our use case
 	app: any,
 	db: DbLike | undefined,
-	// biome-ignore lint/suspicious/noExplicitAny: env bindings vary across Workers runtimes
-	_opts?: { getEnv?: (c: any) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
+	_opts?: { getEnv?: (c: unknown) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
 ) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types are runtime-specific
 	app.post("/ingest", async (c: any) => {
@@ -374,6 +373,10 @@ export function createIngestRoute(
 					200,
 				);
 			}
+			// Verify the session belongs to the same project before retrying
+			if (existingSession.projectId !== body.project_id) {
+				return c.json({ error: "Session belongs to a different project" }, 403);
+			}
 			// It is a failed session (consolidated === -1). Re-ingest / retry workflow using a compare-and-set update.
 			const updatedRow = await dbCtx
 				.update(sessions)
@@ -385,7 +388,13 @@ export function createIngestRoute(
 					metadata: body.metadata ? JSON.stringify(body.metadata) : null,
 					createdAt: now,
 				})
-				.where(and(eq(sessions.id, body.session_id), eq(sessions.consolidated, -1)))
+				.where(
+					and(
+						eq(sessions.id, body.session_id),
+						eq(sessions.consolidated, -1),
+						eq(sessions.projectId, body.project_id),
+					),
+				)
 				.returning({ id: sessions.id })
 				.get();
 
@@ -428,12 +437,11 @@ export function createIngestRoute(
 
 		// ── Queue-based pipeline if binding exists ──
 		if (c.env?.INGEST_QUEUE) {
-			if (isNewSession) {
-				await incrementProjectSessionCount(dbCtx, body, now);
-			}
-
-			// Enqueue the ingestion task
+			// Enqueue the ingestion task (and bump count for new sessions inside the same try)
 			try {
+				if (isNewSession) {
+					await incrementProjectSessionCount(dbCtx, body, now);
+				}
 				const queue = c.env.INGEST_QUEUE;
 				await queue.send({
 					sessionId: body.session_id,
