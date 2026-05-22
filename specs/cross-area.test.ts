@@ -586,6 +586,8 @@ describe("Cross-Area — Project path mappings", () => {
 					stdout: () => {},
 				},
 			);
+			const { pendingMappingWrites } = await import("../plugin/scripts/project-mappings.mjs");
+			await pendingMappingWrites(tmpHome);
 
 			const absolutePath = resolve(gitDir);
 			rmdirSync(gitDir, { recursive: true });

@@ -13,3 +13,4 @@ export function writeProjectMapping(
 	projectId: string,
 	options?: { home?: string },
 ): Promise<void>;
+export function pendingMappingWrites(home?: string): Promise<void>;

@@ -230,7 +230,13 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(cwd || process.cwd());
-	await writeProjectMapping(resolve(cwd || process.cwd()), projectId);
+	try {
+		writeProjectMapping(resolve(cwd || process.cwd()), projectId).catch((err) => {
+			stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
+		});
+	} catch (err) {
+		stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
+	}
 
 	let conversation = "";
 	try {

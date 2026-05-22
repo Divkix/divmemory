@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { mappingsPath, writeProjectMapping } from "../scripts/project-mappings.mjs";
+import {
+	mappingsPath,
+	pendingMappingWrites,
+	writeProjectMapping,
+} from "../scripts/project-mappings.mjs";
 import { extractConversation, getProjectId, processSessionEnd } from "../scripts/session-end.mjs";
 
 describe("session-end hook", () => {
@@ -967,6 +971,7 @@ describe("session-end hook", () => {
 					stdout: () => {},
 				},
 			);
+			await pendingMappingWrites(tmpDir);
 
 			const mappingsFile = join(tmpDir, "project_mappings.json");
 			expect(existsSync(mappingsFile)).toBe(true);
@@ -1065,6 +1070,7 @@ describe("session-end hook", () => {
 					stderr: () => {},
 				},
 			);
+			await pendingMappingWrites(tmpDir);
 
 			const mappings = JSON.parse(
 				readFileSync(join(tmpDir, "project_mappings.json"), "utf-8"),

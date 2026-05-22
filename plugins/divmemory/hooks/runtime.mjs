@@ -292,7 +292,13 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	await flushQueue(fetch_, url, key, stderr);
 
 	const projectId = await getProjectId(payload.cwd || process.cwd());
-	await writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId);
+	try {
+		writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId).catch((err) => {
+			stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
+		});
+	} catch (err) {
+		stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
+	}
 	let conversation = "";
 	try {
 		conversation = extractConversation(await readFile(payload.transcript_path, "utf-8"));
