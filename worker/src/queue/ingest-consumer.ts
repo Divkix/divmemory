@@ -38,7 +38,7 @@ export async function processIngestQueue(
 	const fwModel = env.FIREWORKS_MODEL; // extractFacts has default model if undefined
 
 	for (const msg of batch.messages) {
-		const { sessionId, projectId } = msg.body;
+		const { sessionId } = msg.body;
 
 		// Fetch session raw text and metadata from DB
 		const sessionRow = await dbCtx.select().from(sessions).where(eq(sessions.id, sessionId)).get();
@@ -75,7 +75,7 @@ export async function processIngestQueue(
 				dbCtx,
 				{
 					session_id: sessionId,
-					project_id: projectId,
+					project_id: sessionRow.projectId,
 					source: sessionRow.source || "droid",
 					conversation: sessionRow.rawText || "",
 				},
@@ -84,10 +84,10 @@ export async function processIngestQueue(
 			);
 
 			// Trigger auto-consolidation if unconsolidated count >= 5
-			const unconsol = await unconsolidatedCount(projectId, dbCtx);
+			const unconsol = await unconsolidatedCount(sessionRow.projectId, dbCtx);
 			if (unconsol >= 5) {
 				// Compatibility: Pass `{ env }` as context because the trigger only accesses `.env`
-				const promise = triggerConsolidation(projectId, dbCtx, { env });
+				const promise = triggerConsolidation(sessionRow.projectId, dbCtx, { env });
 				if (promise instanceof Promise) {
 					if (_ctx?.waitUntil) {
 						_ctx.waitUntil(promise);

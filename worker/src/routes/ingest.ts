@@ -367,15 +367,15 @@ export function createIngestRoute(
 			.get();
 
 		if (existingSession) {
+			// Verify the session belongs to the same project before retrying or checking status
+			if (existingSession.projectId !== body.project_id) {
+				return c.json({ error: "Session belongs to a different project" }, 403);
+			}
 			if (existingSession.consolidated !== null && existingSession.consolidated >= 0) {
 				return c.json(
 					{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
 					200,
 				);
-			}
-			// Verify the session belongs to the same project before retrying
-			if (existingSession.projectId !== body.project_id) {
-				return c.json({ error: "Session belongs to a different project" }, 403);
 			}
 			// It is a failed session (consolidated === -1). Re-ingest / retry workflow using a compare-and-set update.
 			const updatedRow = await dbCtx
@@ -438,9 +438,11 @@ export function createIngestRoute(
 		// ── Queue-based pipeline if binding exists ──
 		if (c.env?.INGEST_QUEUE) {
 			// Enqueue the ingestion task (and bump count for new sessions inside the same try)
+			let incremented = false;
 			try {
 				if (isNewSession) {
 					await incrementProjectSessionCount(dbCtx, body, now);
+					incremented = true;
 				}
 				const queue = c.env.INGEST_QUEUE;
 				await queue.send({
@@ -452,14 +454,16 @@ export function createIngestRoute(
 				if (isNewSession) {
 					await dbCtx.delete(sessions).where(eq(sessions.id, body.session_id));
 					// Revert project count bump
-					await runAtomic(dbCtx, async (tx, addStmt) => {
-						addStmt(
-							tx
-								.update(projects)
-								.set({ sessionCount: sql`${projects.sessionCount} - 1` })
-								.where(eq(projects.id, body.project_id)),
-						);
-					});
+					if (incremented) {
+						await runAtomic(dbCtx, async (tx, addStmt) => {
+							addStmt(
+								tx
+									.update(projects)
+									.set({ sessionCount: sql`${projects.sessionCount} - 1` })
+									.where(eq(projects.id, body.project_id)),
+							);
+						});
+					}
 				} else {
 					// Revert to failed state for retry session
 					await dbCtx

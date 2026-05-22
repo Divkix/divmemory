@@ -830,6 +830,139 @@ describe("Queue-Based Ingest Pipeline (TDD)", () => {
 		});
 	});
 
+	describe("Regression Tests for Ingestion Issues", () => {
+		it("returns 403 when session_id exists but belongs to a different project", async () => {
+			const body1 = {
+				session_id: "sess-cross-proj",
+				project_id: "proj/A",
+				conversation: "User: hi from project A",
+			};
+			const req1 = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body1),
+			});
+			const res1 = await app.fetch(req1, envVars() as unknown as Record<string, string>);
+			expect(res1.status).toBe(200);
+
+			const body2 = {
+				session_id: "sess-cross-proj",
+				project_id: "proj/B",
+				conversation: "User: hi from project B",
+			};
+			const req2 = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body2),
+			});
+			const res2 = await app.fetch(req2, envVars() as unknown as Record<string, string>);
+			expect(res2.status).toBe(403);
+			const json2 = (await res2.json()) as { error: string };
+			expect(json2.error).toBe("Session belongs to a different project");
+		});
+
+		it("returns 403 when session_id is consolidated but belongs to a different project", async () => {
+			await testDb.db
+				.insert(projects)
+				.values({ id: "proj/A", createdAt: new Date().toISOString() })
+				.onConflictDoNothing();
+			await testDb.db.insert(sessions).values({
+				id: "sess-cross-proj-consolidated",
+				projectId: "proj/A",
+				rawText: "User: hi",
+				consolidated: 1,
+				createdAt: new Date().toISOString(),
+			});
+
+			const body2 = {
+				session_id: "sess-cross-proj-consolidated",
+				project_id: "proj/B",
+				conversation: "User: hi from project B",
+			};
+			const req2 = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body2),
+			});
+			const res2 = await app.fetch(req2, envVars() as unknown as Record<string, string>);
+			expect(res2.status).toBe(403);
+			const json2 = (await res2.json()) as { error: string };
+			expect(json2.error).toBe("Session belongs to a different project");
+		});
+
+		it("does not decrement project session count when increment fails", async () => {
+			const mockDb = new Proxy(testDb.db, {
+				get(target, prop, receiver) {
+					if (prop === "transaction") {
+						const origTransaction = Reflect.get(target, prop, receiver);
+						return (callback: (tx: unknown) => unknown) => {
+							return origTransaction.call(target, (tx: unknown) => {
+								const proxiedTx = new Proxy(tx as object, {
+									get(txTarget, txProp, txReceiver) {
+										if (txProp === "update") {
+											return (table: unknown) => {
+												if (table === projects) {
+													throw new Error("Simulated update failure for projects table");
+												}
+												const updateFn = (txTarget as { update: (t: unknown) => unknown }).update;
+												return updateFn(table);
+											};
+										}
+										return Reflect.get(txTarget, txProp, txReceiver);
+									},
+								});
+								return callback(proxiedTx);
+							});
+						};
+					}
+					if (prop === "update") {
+						return (table: unknown) => {
+							if (table === projects) {
+								throw new Error("Simulated update failure for projects table");
+							}
+							const updateFn = target.update as (t: unknown) => unknown;
+							return updateFn(table);
+						};
+					}
+					return Reflect.get(target, prop, receiver);
+				},
+			});
+
+			const proxyApp = createIngestApp(mockDb);
+
+			const body = {
+				session_id: "sess-fail-increment",
+				project_id: "proj/fail-increment",
+				conversation: "User: hello fail",
+			};
+			const req = new Request("http://localhost/ingest", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify(body),
+			});
+
+			const res = await proxyApp.fetch(
+				req,
+				envVarsWithQueue() as unknown as Record<string, string>,
+			);
+			expect(res.status).toBe(500);
+
+			const sess = testDb.db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.id, "sess-fail-increment"))
+				.get();
+			expect(sess).toBeUndefined();
+
+			const proj = testDb.db
+				.select()
+				.from(projects)
+				.where(eq(projects.id, "proj/fail-increment"))
+				.get();
+			expect(proj?.sessionCount).toBe(0);
+		});
+	});
+
 	describe("Consumer Handler Tests", () => {
 		it("Test 1.3 (Consumer Successful Extraction): processes extraction successfully and sets consolidated = 0", async () => {
 			const now = new Date().toISOString();
