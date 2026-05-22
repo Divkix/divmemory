@@ -480,6 +480,19 @@ describe("bootstrap cli", () => {
 			expect(id).toBe("github.com/divkix/repo");
 		});
 
+		it("normalizes protocol-prefixed SSH remote URL consistently", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId } = mod;
+			if (!getProjectId) return;
+			const { execSync } = await import("node:child_process");
+			const gitDir = join(tmpDir, "ssh-proto-repo");
+			mkdirSync(gitDir);
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin ssh://git@github.com/divkix/my-app.git", { cwd: gitDir });
+			const id = await getProjectId(gitDir);
+			expect(id).toBe("github.com/divkix/my-app");
+		});
+
 		it("lowercases git remote", async () => {
 			const mod = await loadCliModule();
 			const { getProjectId } = mod;

@@ -42,19 +42,19 @@ export async function getProjectId(cwd) {
 			});
 		});
 
-		// Normalize: strip .git suffix, trailing slashes, and lowercase
-		let normalized = result
-			.replace(/\.git$/, "")
-			.replace(/\/+$/, "")
-			.toLowerCase();
+		// Normalize: strip .git suffix and trailing slashes
+		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
+
+		// Lowercase the string
+		normalized = normalized.toLowerCase();
+
+		// Strip protocol (https://, ssh://, etc.)
+		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 
 		// Convert SSH "git@host:path" to "host/path"
 		if (normalized.startsWith("git@")) {
 			normalized = normalized.replace(/^git@/, "").replace(":", "/");
 		}
-
-		// Strip protocol (https://, ssh://, etc.)
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
 
 		return normalized;
 	} catch {
@@ -149,6 +149,13 @@ export async function processSessionStart(stdinData, deps = {}) {
 		stderr("[divmemory] DIVMEMORY_API_KEY not set. No context injected.");
 		if (cached.trim()) stdout(`${cached.trimEnd()}\n`);
 		else writeFallback(stdout);
+		return { exitCode: 0 };
+	}
+
+	// Droid currently injects only one SessionStart hook output; keep this hook fast when
+	// cache exists so memory context is not displaced by other startup hooks.
+	if (cached.trim()) {
+		stdout(`${cached.trimEnd()}\n`);
 		return { exitCode: 0 };
 	}
 
