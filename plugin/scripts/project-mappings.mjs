@@ -7,17 +7,28 @@ import { basename, dirname, join, resolve } from "node:path";
 
 const LOCK_RETRIES = 20;
 const LOCK_BASE_DELAY_MS = 25;
+const LOCK_FILE_NAME = ".project_mappings.lock";
+const LOCAL_PROJECT_PREFIX = "local-";
+const MAPPINGS_FILE_NAME = "project_mappings.json";
 
 export function divmemoryHome(home) {
 	return home ?? process.env.DIVMEMORY_HOME ?? join(homedir(), ".divmemory");
 }
 
+export function getProjectName(projectId) {
+	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
+	if (localMatch) return localMatch[1] ?? projectId;
+	const lastSlash = projectId.lastIndexOf("/");
+	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
+	return projectId;
+}
+
 export function mappingsPath(home) {
-	return join(divmemoryHome(home), "project_mappings.json");
+	return join(divmemoryHome(home), MAPPINGS_FILE_NAME);
 }
 
 function mappingLockPath(home) {
-	return join(divmemoryHome(home), ".project_mappings.lock");
+	return join(divmemoryHome(home), LOCK_FILE_NAME);
 }
 
 /** Cross-process mutex for read-modify-write; in-process writeChains remains an optimization. */
@@ -126,7 +137,7 @@ export function normalizeGitRemote(url) {
 
 export function localProjectId(absolutePath) {
 	const hash = createHash("sha256").update(absolutePath).digest("hex").slice(0, 12);
-	return `local-${hash}-${basename(absolutePath)}`;
+	return `${LOCAL_PROJECT_PREFIX}${hash}-${basename(absolutePath)}`;
 }
 
 /**
@@ -155,29 +166,35 @@ export async function resolveProjectId(cwd, options = {}) {
 		});
 		return normalizeGitRemote(result);
 	} catch {
+		let mappings = {};
+		try {
+			const raw = readFileSync(mappingsPath(options.home), "utf-8");
+			mappings = JSON.parse(raw);
+			if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
+				mappings = {};
+			}
+		} catch {
+			mappings = {};
+		}
+
 		if (absolutePath.startsWith("/")) {
 			const encoded = `-${absolutePath.slice(1).replace(/\//g, "-")}`;
 			const rest = encoded.slice(1);
-			const keys = getAllMappingKeys(options);
-			for (const key of keys) {
+			for (const [key, value] of Object.entries(mappings)) {
+				if (typeof value !== "string") continue;
 				if (key.startsWith("/")) {
 					const stripped = key.slice(1);
 					const encodedKey = stripped.replace(/\//g, "-");
-					if (encodedKey === rest) {
-						const mapping = lookupProjectMapping(key, options);
-						if (mapping) {
-							return mapping;
-						}
-					}
+					if (encodedKey === rest) return value;
 				} else if (key === encoded) {
-					const mapping = lookupProjectMapping(key, options);
-					if (mapping) {
-						return mapping;
-					}
+					return value;
 				}
 			}
 		}
-		return lookupProjectMapping(absolutePath, options) ?? localProjectId(absolutePath);
+
+		const direct = mappings[absolutePath];
+		if (typeof direct === "string") return direct;
+		return localProjectId(absolutePath);
 	}
 }
 
@@ -207,6 +224,11 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
 			mappings = {};
 		}
 
+		const encodedKey = `-${absolutePath.slice(1).replace(/\//g, "-")}`;
+		if (mappings[absolutePath] === projectId || mappings[encodedKey] === projectId) {
+			return;
+		}
+
 		mappings[absolutePath] = projectId;
 
 		const tmpPath = `${path}.${randomUUID()}.tmp`;
@@ -224,7 +246,7 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
  * Best-effort: schedules write on the in-process chain; errors are swallowed.
  */
 export function writeProjectMapping(absolutePath, projectId, options = {}) {
-	if (projectId.startsWith("local-")) return Promise.resolve();
+	if (projectId.startsWith(LOCAL_PROJECT_PREFIX)) return Promise.resolve();
 
 	const homeKey = divmemoryHome(options.home);
 	const work = (writeChains.get(homeKey) ?? Promise.resolve()).then(() =>

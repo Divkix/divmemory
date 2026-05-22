@@ -6,14 +6,19 @@ import {
 	rename,
 	writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { getProjectId, writeProjectMapping } from "./project-mappings.mjs";
+import {
+	divmemoryHome,
+	getProjectId,
+	getProjectName,
+	writeProjectMapping,
+} from "./project-mappings.mjs";
 
 export {
 	divmemoryHome,
 	getProjectId,
+	getProjectName,
 	lookupProjectMapping,
 	mappingsPath,
 	resolveProjectId,
@@ -98,25 +103,8 @@ export function extractConversation(jsonlContent) {
 	return turns.join("\n\n");
 }
 
-/**
- * Determine project_name from project_id.
- * If project_id is a path-like string, uses basename; otherwise returns project_id.
- */
-function getProjectName(projectId) {
-	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
-	if (localMatch) return localMatch[1];
-	// If it contains a slash, extract the last segment
-	const lastSlash = projectId.lastIndexOf("/");
-	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
-	return projectId;
-}
-
-function getDivmemoryHome() {
-	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
-}
-
 function getQueuePath() {
-	return join(getDivmemoryHome(), "queue.jsonl");
+	return join(divmemoryHome(), "queue.jsonl");
 }
 
 async function postIngest(fetch_, workerUrl, apiKey, body) {
@@ -198,7 +186,6 @@ async function flushQueue(fetch_, workerUrl, apiKey, stderr) {
  */
 export async function processSessionEnd(stdinData, deps = {}) {
 	const stderr = deps.stderr || ((s) => process.stderr.write(`${s}\n`));
-	const _stdout = deps.stdout || ((s) => process.stdout.write(s));
 	const fetch_ = deps.fetch || ((...args) => fetch(...args));
 
 	const WORKER_URL = process.env.DIVMEMORY_WORKER_URL || DEFAULT_WORKER_URL;
@@ -237,11 +224,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(cwd || process.cwd());
-	try {
-		await writeProjectMapping(resolve(cwd || process.cwd()), projectId);
-	} catch (err) {
-		stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
-	}
+	await writeProjectMapping(resolve(cwd || process.cwd()), projectId);
 
 	let conversation = "";
 	try {

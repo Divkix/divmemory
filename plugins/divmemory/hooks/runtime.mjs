@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import {
 	divmemoryHome,
 	getProjectId,
+	getProjectName,
 	writeProjectMapping,
 } from "../../../plugin/scripts/project-mappings.mjs";
 
@@ -178,13 +179,6 @@ export function extractConversation(jsonlContent) {
 	return turns.join("\n\n");
 }
 
-function projectName(projectId) {
-	const local = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
-	if (local) return local[1];
-	const lastSlash = projectId.lastIndexOf("/");
-	return lastSlash >= 0 ? projectId.slice(lastSlash + 1) : projectId;
-}
-
 export async function processSessionStart(stdinData, deps = {}) {
 	const stderr = deps.stderr || ((s) => process.stderr.write(`${s}\n`));
 	const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -284,11 +278,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(payload.cwd || process.cwd());
-	try {
-		await writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId);
-	} catch (err) {
-		stderr(`[divmemory] Failed to persist project mapping: ${err.message}`);
-	}
+	await writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId);
 
 	const key = apiKey();
 	if (!key) {
@@ -307,7 +297,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	const body = {
 		session_id: payload.session_id,
 		project_id: projectId,
-		project_name: projectName(projectId),
+		project_name: getProjectName(projectId),
 		source: "droid",
 		conversation,
 		metadata: {},

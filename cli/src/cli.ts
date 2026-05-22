@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
 	divmemoryHome,
 	getAllMappingKeys,
+	getProjectName,
 	lookupProjectMapping,
 	mappingsPath,
 	getProjectId as resolveProjectId,
@@ -254,14 +255,6 @@ export function getMappingsFilePath(): string {
 
 export async function getProjectId(cwd: string): Promise<string> {
 	return resolveProjectId(cwd);
-}
-
-export function getProjectName(projectId: string): string {
-	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
-	if (localMatch) return localMatch[1] ?? projectId;
-	const lastSlash = projectId.lastIndexOf("/");
-	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
-	return projectId;
 }
 
 export function getSessionIdFromFilename(filename: string): string {

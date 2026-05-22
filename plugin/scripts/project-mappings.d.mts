@@ -1,4 +1,5 @@
 export function divmemoryHome(home?: string): string;
+export function getProjectName(projectId: string): string;
 export function mappingsPath(home?: string): string;
 export function lookupProjectMapping(
 	absolutePath: string,
