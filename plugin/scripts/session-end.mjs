@@ -83,19 +83,29 @@ export function extractConversation(jsonlContent) {
 			continue;
 		}
 
-		if (msg.type === "system-reminder" || msg.type === "system-notification") continue;
-		if (msg.type === "thinking") continue;
-		if (msg.type === "tool_use") continue;
-		if (msg.type === "tool_result") continue;
+		let targetMsg = msg;
+		if (msg.type === "message" && msg.message && typeof msg.message === "object") {
+			targetMsg = msg.message;
+		}
 
-		const role = msg.role || msg.type;
+		if (msg.visibility === "llm_only" || targetMsg.visibility === "llm_only") {
+			continue;
+		}
+
+		const type = targetMsg.type;
+		if (type === "system-reminder" || type === "system-notification") continue;
+		if (type === "thinking") continue;
+		if (type === "tool_use") continue;
+		if (type === "tool_result") continue;
+
+		const role = targetMsg.role || type;
 		if (role !== "user" && role !== "assistant") continue;
 
 		let text = "";
-		if (typeof msg.content === "string") {
-			text = msg.content;
-		} else if (Array.isArray(msg.content)) {
-			text = msg.content
+		if (typeof targetMsg.content === "string") {
+			text = targetMsg.content;
+		} else if (Array.isArray(targetMsg.content)) {
+			text = targetMsg.content
 				.filter((c) => c?.type === "text")
 				.map((c) => c.text || "")
 				.join("\n");
