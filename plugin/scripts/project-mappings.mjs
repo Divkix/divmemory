@@ -232,5 +232,5 @@ export function writeProjectMapping(absolutePath, projectId, options = {}) {
 	);
 	const settled = work.catch(() => {});
 	writeChains.set(homeKey, settled);
-	return work;
+	return settled;
 }
