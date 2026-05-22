@@ -1,7 +1,10 @@
+import type { MessageBatch } from "@cloudflare/workers-types";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { bearerAuth, hybridAuth } from "./auth";
 import { createLoginRoute } from "./login";
+import type { QueueMessage } from "./queue/ingest-consumer";
+import { processIngestQueue } from "./queue/ingest-consumer";
 import * as consolidate from "./routes/consolidate";
 import { createContextRoute } from "./routes/context";
 import * as ingest from "./routes/ingest";
@@ -12,9 +15,17 @@ import { createWebUiRoute } from "./routes/webui";
 /* ────────── Wire auto-consolidation trigger ────────── */
 ingest.setConsolidationTrigger(
 	(projectId: string, db: Parameters<typeof consolidate.runConsolidation>[1], c: unknown) => {
-		void consolidate.runConsolidation(projectId, db, {
-			FIREWORKS_API_KEY: (c as { env: Record<string, string> }).env.FIREWORKS_API_KEY ?? "",
-			FIREWORKS_MODEL: (c as { env: Record<string, string> }).env.FIREWORKS_MODEL ?? "",
+		const env =
+			typeof c === "object" &&
+			c !== null &&
+			"env" in c &&
+			typeof (c as Record<string, unknown>).env === "object" &&
+			(c as Record<string, unknown>).env !== null
+				? ((c as Record<string, unknown>).env as Record<string, string>)
+				: {};
+		return consolidate.runConsolidation(projectId, db, {
+			FIREWORKS_API_KEY: env.FIREWORKS_API_KEY ?? "",
+			FIREWORKS_MODEL: env.FIREWORKS_MODEL ?? "",
 		});
 	},
 );
@@ -83,12 +94,28 @@ createLoginRoute(app, "divmemory_session");
 /* ────────── Web UI routes ────────── */
 createWebUiRoute(app);
 
+function narrowEnv(c: unknown): Record<string, string> {
+	if (
+		typeof c === "object" &&
+		c !== null &&
+		"env" in c &&
+		typeof (c as Record<string, unknown>).env === "object" &&
+		(c as Record<string, unknown>).env !== null
+	) {
+		return (c as Record<string, unknown>).env as Record<string, string>;
+	}
+	return {};
+}
+
 /* ────────── Ingest route ────────── */
 ingest.createIngestRoute(app, undefined, {
-	getEnv: (c) => ({
-		FIREWORKS_API_KEY: (c.env as Record<string, string>).FIREWORKS_API_KEY,
-		FIREWORKS_MODEL: (c.env as Record<string, string>).FIREWORKS_MODEL,
-	}),
+	getEnv: (c) => {
+		const env = narrowEnv(c);
+		return {
+			FIREWORKS_API_KEY: env.FIREWORKS_API_KEY,
+			FIREWORKS_MODEL: env.FIREWORKS_MODEL,
+		};
+	},
 });
 
 /* ────────── Context route ────────── */
@@ -96,10 +123,13 @@ createContextRoute(app);
 
 /* ────────── Consolidation route ────────── */
 consolidate.createConsolidateRoute(app, undefined, {
-	getEnv: (c) => ({
-		FIREWORKS_API_KEY: (c.env as Record<string, string>).FIREWORKS_API_KEY,
-		FIREWORKS_MODEL: (c.env as Record<string, string>).FIREWORKS_MODEL,
-	}),
+	getEnv: (c) => {
+		const env = narrowEnv(c);
+		return {
+			FIREWORKS_API_KEY: env.FIREWORKS_API_KEY,
+			FIREWORKS_MODEL: env.FIREWORKS_MODEL,
+		};
+	},
 });
 
 /* ────────── Memory CRUD routes ────────── */
@@ -124,4 +154,11 @@ async function scheduled(
 export default {
 	fetch: app.fetch,
 	scheduled,
+	queue: async (
+		batch: MessageBatch<QueueMessage>,
+		env: { DB: D1Database; FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
+		ctx: Pick<ExecutionContext, "waitUntil">,
+	): Promise<void> => {
+		await processIngestQueue(batch, env, ctx);
+	},
 };

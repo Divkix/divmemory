@@ -116,6 +116,10 @@ Then apply migrations and run the local Worker:
 # Apply migrations (uses worker/migrations/ via migrations_dir in wrangler.jsonc)
 npx wrangler d1 migrations apply divmemory-db --local
 
+# (Optional for local, required for deployment) Create the Cloudflare queues:
+npx wrangler queues create divmemory-ingest
+npx wrangler queues create divmemory-ingest-dlq
+
 # Start the worker
 bun run dev    # runs `wrangler dev --port 8787`
 ```
@@ -373,7 +377,17 @@ Prefer `d1 migrations apply` over `d1 execute --file=...` per migration file. Th
 
 > **Tip:** To see what is pending or already applied, run `npx wrangler d1 migrations list divmemory-db --remote`.
 
-### 4. Set Worker secrets
+### 4. Create Cloudflare Queues
+
+The ingest pipeline uses two queues: the primary queue and a dead-letter queue. Create both before deploying:
+
+```bash
+cd worker
+npx wrangler queues create divmemory-ingest
+npx wrangler queues create divmemory-ingest-dlq
+```
+
+### 5. Set Worker secrets
 
 These values are encrypted and stored in Cloudflare's edge:
 
@@ -396,7 +410,7 @@ npx wrangler secret put DIVMEMORY_WEB_PASSWORD
 | `FIREWORKS_API_KEY` | **Yes** | Your [Fireworks AI](https://fireworks.ai) API key. A Firepass subscription is required for extraction. |
 | `DIVMEMORY_WEB_PASSWORD` | **Yes** | Any password you want for the web UI. |
 
-### 5. Deploy the Worker
+### 6. Deploy the Worker
 
 ```bash
 cd worker
@@ -409,12 +423,12 @@ Wrangler will bundle, upload, and print the live Worker URL, for example:
 https://divmemory.<your-subdomain>.workers.dev
 ```
 
-### 6. Configure the Droid plugin
+### 7. Configure the Droid plugin
 
 On every machine that should read/write memory, export these environment variables (add to your shell profile):
 
 ```bash
-export DIVMEMORY_API_KEY="<same token you set in Step 4>"
+export DIVMEMORY_API_KEY="<same token you set in Step 5>"
 export DIVMEMORY_WORKER_URL="https://divmemory.<your-subdomain>.workers.dev"
 ```
 
@@ -427,7 +441,7 @@ droid plugin install divmemory@divmemory --scope user
 
 ### First-deploy smoke test
 
-After Steps 1-5, verify the stack end-to-end:
+After Steps 1-6, verify the stack end-to-end:
 
 ```bash
 export DIVMEMORY_API_KEY="<your token>"

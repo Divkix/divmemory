@@ -181,20 +181,20 @@ async function dedupFacts(
 /* ───────── helpers: auto-consolidation trigger ───────── */
 
 export function setConsolidationTrigger(
-	fn: (projectId: string, db: DbLike, c: unknown) => void | Promise<void>,
+	fn: (projectId: string, db: DbLike, c: unknown) => undefined | Promise<unknown>,
 ) {
 	consolidationTrigger = fn;
 }
 
-let consolidationTrigger: (projectId: string, db: DbLike, c: unknown) => void | Promise<void> = (
-	_projectId: string,
-	_db: DbLike,
-	_c: unknown,
-) => {
+let consolidationTrigger: (
+	projectId: string,
+	db: DbLike,
+	c: unknown,
+) => undefined | Promise<unknown> = (_projectId: string, _db: DbLike, _c: unknown) => {
 	// default no-op — real trigger wired by the consolidation feature
 };
 
-async function unconsolidatedCount(projectId: string, db: DbLike): Promise<number> {
+export async function unconsolidatedCount(projectId: string, db: DbLike): Promise<number> {
 	const row = (await db
 		.select({ count: sql<number>`count(*)` })
 		.from(sessions)
@@ -203,8 +203,12 @@ async function unconsolidatedCount(projectId: string, db: DbLike): Promise<numbe
 	return row?.count ?? 0;
 }
 
-function triggerConsolidation(projectId: string, db: DbLike, c: unknown) {
-	consolidationTrigger(projectId, db, c);
+export function triggerConsolidation(
+	projectId: string,
+	db: DbLike,
+	c: unknown,
+): undefined | Promise<unknown> {
+	return consolidationTrigger(projectId, db, c);
 }
 
 /* ───────── split atomic DB operations: pre-insert (session with raw_text) + post-extraction update ───────── */
@@ -214,23 +218,19 @@ async function ensureProjectExists(db: DbLike, body: IngestBody, now: string): P
 	// increment sessionCount — that only happens after the session is
 	// confirmed as newly created (not a duplicate).
 	const projectId = body.project_id;
-	const existingProject = await db
-		.select({ id: projects.id })
-		.from(projects)
-		.where(eq(projects.id, projectId))
-		.get();
-	if (!existingProject) {
-		await db.insert(projects).values({
+	await db
+		.insert(projects)
+		.values({
 			id: projectId,
 			name: body.project_name || projectId.split("/").pop() || projectId,
 			sessionCount: 0, // will be incremented when the session is actually inserted
 			createdAt: now,
 			lastSeen: now,
-		});
-	}
+		})
+		.onConflictDoNothing();
 }
 
-async function incrementProjectSessionCount(
+export async function incrementProjectSessionCount(
 	db: DbLike,
 	body: IngestBody,
 	now: string,
@@ -251,7 +251,7 @@ async function incrementProjectSessionCount(
 	});
 }
 
-async function processExtractionAfter(
+export async function processExtractionAfter(
 	db: DbLike,
 	body: IngestBody,
 	result: ExtractionResult,
@@ -333,8 +333,7 @@ export function createIngestRoute(
 	// biome-ignore lint/suspicious/noExplicitAny: Hono generic typing is too restrictive for our use case
 	app: any,
 	db: DbLike | undefined,
-	// biome-ignore lint/suspicious/noExplicitAny: env bindings vary across Workers runtimes
-	opts?: { getEnv?: (c: any) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
+	_opts?: { getEnv?: (c: unknown) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
 ) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types are runtime-specific
 	app.post("/ingest", async (c: any) => {
@@ -359,44 +358,139 @@ export function createIngestRoute(
 
 		const now = new Date().toISOString();
 
-		// ── ensure project exists for FK compliance (no sessionCount bump yet) ──
-		await ensureProjectExists(dbCtx, body, now);
-
-		// ── atomic session creation with duplicate detection ──
-		// INSERT with ON CONFLICT DO NOTHING is atomic at the SQL level, so
-		// concurrent requests for the same session_id cannot both win.
-		const created = await dbCtx
-			.insert(sessions)
-			.values({
-				id: body.session_id,
-				projectId: body.project_id,
-				source: body.source || "droid",
-				rawText: body.conversation,
-				consolidated: 0,
-				extractionError: null,
-				tokenCount: body.conversation.length,
-				metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-				createdAt: now,
-			})
-			.onConflictDoNothing()
-			.returning({ id: sessions.id })
+		// ── check for existing session & duplicate/retry logic ──
+		let isNewSession = false;
+		const existingSession = await dbCtx
+			.select()
+			.from(sessions)
+			.where(eq(sessions.id, body.session_id))
 			.get();
-		if (!created) {
+
+		if (existingSession) {
+			// Verify the session belongs to the same project before retrying or checking status
+			if (existingSession.projectId !== body.project_id) {
+				return c.json({ error: "Session belongs to a different project" }, 403);
+			}
+			if (existingSession.consolidated !== null && existingSession.consolidated >= 0) {
+				return c.json(
+					{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
+					200,
+				);
+			}
+			// It is a failed session (consolidated === -1). Re-ingest / retry workflow using a compare-and-set update.
+			const updatedRow = await dbCtx
+				.update(sessions)
+				.set({
+					rawText: body.conversation,
+					consolidated: 0,
+					extractionError: null,
+					tokenCount: body.conversation.length,
+					metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+					createdAt: now,
+				})
+				.where(
+					and(
+						eq(sessions.id, body.session_id),
+						eq(sessions.consolidated, -1),
+						eq(sessions.projectId, body.project_id),
+					),
+				)
+				.returning({ id: sessions.id })
+				.get();
+
+			if (!updatedRow) {
+				// The update affected 0 rows, meaning another request already retried/reset it.
+				return c.json(
+					{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
+					200,
+				);
+			}
+			isNewSession = false;
+		} else {
+			isNewSession = true;
+			// ── ensure project exists for FK compliance (no sessionCount bump yet) ──
+			await ensureProjectExists(dbCtx, body, now);
+
+			const created = await dbCtx
+				.insert(sessions)
+				.values({
+					id: body.session_id,
+					projectId: body.project_id,
+					source: body.source || "droid",
+					rawText: body.conversation,
+					consolidated: 0,
+					extractionError: null,
+					tokenCount: body.conversation.length,
+					metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+					createdAt: now,
+				})
+				.onConflictDoNothing()
+				.returning({ id: sessions.id })
+				.get();
+			if (!created) {
+				return c.json(
+					{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
+					200,
+				);
+			}
+		}
+
+		// ── Queue-based pipeline if binding exists ──
+		if (c.env?.INGEST_QUEUE) {
+			// Enqueue the ingestion task (and bump count for new sessions inside the same try)
+			let incremented = false;
+			try {
+				if (isNewSession) {
+					await incrementProjectSessionCount(dbCtx, body, now);
+					incremented = true;
+				}
+				const queue = c.env.INGEST_QUEUE;
+				await queue.send({
+					sessionId: body.session_id,
+					projectId: body.project_id,
+				});
+			} catch (_queueError) {
+				// Rollback state to avoid orphaned sessions
+				if (isNewSession) {
+					await dbCtx.delete(sessions).where(eq(sessions.id, body.session_id));
+					// Revert project count bump
+					if (incremented) {
+						await runAtomic(dbCtx, async (tx, addStmt) => {
+							addStmt(
+								tx
+									.update(projects)
+									.set({ sessionCount: sql`${projects.sessionCount} - 1` })
+									.where(eq(projects.id, body.project_id)),
+							);
+						});
+					}
+				} else {
+					// Revert to failed state for retry session
+					await dbCtx
+						.update(sessions)
+						.set({ consolidated: -1, extractionError: "Queue send failed" })
+						.where(eq(sessions.id, body.session_id));
+				}
+				return c.json({ error: "Failed to queue ingestion" }, 500);
+			}
+
 			return c.json(
-				{ ok: true, status: "duplicate", session_id: body.session_id, facts_written: 0 },
-				200,
+				{ ok: true, status: "queued", session_id: body.session_id, facts_written: 0 },
+				202,
 			);
 		}
 
-		// ── unified atomic transaction: fact extraction + persist ──
-		const env = opts?.getEnv ? opts.getEnv(c) : {};
+		// ── Legacy/Fallback inline pipeline if binding does not exist ──
+		const env = _opts?.getEnv ? _opts.getEnv(c) : {};
 		const fwKey = env.FIREWORKS_API_KEY ?? "";
 		const fwModel = env.FIREWORKS_MODEL ?? DEFAULT_FIREWORKS_MODEL;
 
 		const doIngest = async () => {
 			try {
-				// Step 1: Bump project session count (only after new session confirmed)
-				await incrementProjectSessionCount(dbCtx, body, now);
+				if (isNewSession) {
+					// Step 1: Bump project session count (only after new session confirmed)
+					await incrementProjectSessionCount(dbCtx, body, now);
+				}
 
 				// Step 2: Firepass extraction (network call, outside DB transaction)
 				const result = await extractFacts(body.conversation, fwKey, fwModel);
@@ -407,7 +501,19 @@ export function createIngestRoute(
 				// ── auto-consolidation trigger (outside atomic tx) ──
 				const unconsol = await unconsolidatedCount(body.project_id, dbCtx);
 				if (unconsol >= 5) {
-					triggerConsolidation(body.project_id, dbCtx, c);
+					const promise = triggerConsolidation(body.project_id, dbCtx, c);
+					if (promise instanceof Promise) {
+						const wc = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void };
+						if (typeof wc.waitUntil === "function") {
+							wc.waitUntil(
+								promise.catch((err) => {
+									console.error("[Auto-Consolidation] Inline trigger failed:", err);
+								}),
+							);
+						} else {
+							await promise;
+						}
+					}
 				}
 				return factsWritten;
 			} catch (e) {
