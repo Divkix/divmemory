@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
 import { TOPIC_LABELS, TOPIC_ORDER, type TopicId } from "../lib/topics";
-import { memories, projects } from "../schema";
+import { GLOBAL_PROJECT_ID, memories, projects } from "../schema";
 
 /* ───────── types ───────── */
 
@@ -10,6 +10,9 @@ type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unkno
 
 const DEFAULT_MAX_CHARS = 12000;
 const MIN_CHARS_PER_TOPIC = 500;
+
+/** Maximum fraction of the total context budget allocated to global memories (25%). */
+const GLOBAL_BUDGET_FRACTION = 0.25;
 
 /* ───────── helpers ───────── */
 
@@ -32,6 +35,19 @@ function formatTopicSection(label: string, facts: Array<{ content: string }>): s
 	if (facts.length === 0) return "";
 	const lines = facts.map((f) => `- ${f.content}`);
 	return `\n### ${label}\n\n${lines.join("\n")}`;
+}
+
+/** Format the global preferences section. Returns empty string if no global facts. */
+function formatGlobalSection(globalFacts: Array<{ content: string }>): string {
+	if (globalFacts.length === 0) return "";
+	const lines = globalFacts.map((f) => `- ${f.content}`);
+	return `\n### Global Preferences\n\n${lines.join("\n")}\n`;
+}
+
+/** Returns the override note if global facts exist; empty string otherwise. */
+function formatGlobalOverrideNote(globalCount: number): string {
+	if (globalCount === 0) return "";
+	return `_Project-specific guidelines override global preferences in case of conflict._\n`;
 }
 
 /**
@@ -130,7 +146,7 @@ export function createContextRoute(app: any, db?: DbLike) {
 
 		const projectName = project?.name || projectId.split("/").pop() || projectId;
 
-		// Fetch active memories with curated facts first, then newest first.
+		// Fetch active memories for the requested project
 		const rows = (await dbCtx
 			.select()
 			.from(memories)
@@ -145,7 +161,28 @@ export function createContextRoute(app: any, db?: DbLike) {
 			updatedAt: string | null;
 		}>;
 
-		// Group by topic
+		// Also fetch global memories (cross-project developer preferences)
+		const globalRows = (await dbCtx
+			.select()
+			.from(memories)
+			.where(and(eq(memories.projectId, GLOBAL_PROJECT_ID), eq(memories.status, "active")))
+			.orderBy(desc(memories.curated), desc(memories.updatedAt))
+			.all()) as Array<{
+			id: string;
+			content: string | null;
+			updatedAt: string | null;
+		}>;
+
+		// Extract global fact content
+		const globalFacts: Array<{ content: string }> = [];
+		for (const row of globalRows) {
+			if (row.content) {
+				globalFacts.push({ content: row.content });
+			}
+		}
+		const globalCount = globalFacts.length;
+
+		// Group project memories by topic
 		const byTopic = new Map<string, Array<{ content: string }>>();
 		for (const row of rows) {
 			const topic = row.topic || "general";
@@ -159,7 +196,7 @@ export function createContextRoute(app: any, db?: DbLike) {
 
 		const factCount = rows.length;
 		let latestRow: string | null = null;
-		for (const row of rows) {
+		for (const row of [...rows, ...globalRows]) {
 			if (!row.updatedAt) continue;
 			if (!latestRow || row.updatedAt > latestRow) {
 				latestRow = row.updatedAt;
@@ -167,7 +204,7 @@ export function createContextRoute(app: any, db?: DbLike) {
 		}
 		const updatedAt = latestRow || nowISO();
 
-		// Build sections in consistent topic order
+		// Build project topic sections in consistent order
 		const sections: Array<{ label: string; text: string; factCount: number }> = [];
 		for (const t of TOPIC_ORDER) {
 			const facts = byTopic.get(t) || [];
@@ -186,13 +223,34 @@ export function createContextRoute(app: any, db?: DbLike) {
 			sections.push({ label, text, factCount: facts.length });
 		}
 
+		// Build global section (if any)
+		const globalSectionText = formatGlobalSection(globalFacts);
+		const overrideNote = formatGlobalOverrideNote(globalCount);
+
+		// Calculate budget: global gets at most 25%; unused cap flows to project content
+		const globalCap = Math.floor(maxChars * GLOBAL_BUDGET_FRACTION);
+		const globalBudget = Math.min(globalCap, globalSectionText.length);
+		const projectBudget = maxChars - globalBudget;
+
+		const totalFactCount = factCount + globalCount;
+		const header = formatHeader(projectName, totalFactCount, updatedAt);
+
+		// Truncate global section to its budget
+		let globalText = "";
+		if (globalSectionText) {
+			globalText = globalSectionText.slice(0, globalBudget);
+		}
+
+		// Truncate project sections to project budget
+		const topicText = truncateContext(sections, projectBudget);
+
+		// Assemble: header + override note + global section + project topic sections
 		let body: string;
-		if (factCount === 0) {
+		if (totalFactCount === 0) {
 			body = `${formatHeader(projectName, 0, updatedAt)}\n_No memories recorded yet._\n`;
 		} else {
-			const header = formatHeader(projectName, factCount, updatedAt);
-			const topicText = truncateContext(sections, maxChars - header.length);
-			body = `${header + topicText}\n`;
+			const bodyParts = [header, overrideNote, globalText, topicText].filter(Boolean);
+			body = `${bodyParts.join("")}\n`;
 		}
 
 		return c.text(`${body.trimEnd()}\n`, 200, {

@@ -1,9 +1,10 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import type { DbLike } from "../lib/db";
 import { runAtomic } from "../lib/db";
 import { callFirepass } from "../lib/firepass";
+import { PREFERENCES_TOPIC } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
-import { memories, projects, sessions } from "../schema";
+import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 
 /* ───────── types ───────── */
 
@@ -46,9 +47,72 @@ Consolidate the above into the most useful, up-to-date set of facts.`;
 /* ───────── in-flight guard (per-isolate) ───────── */
 
 const inFlight = new Map<string, boolean>();
+const globalInFlight = new Map<string, boolean>();
 
 export function isConsolidationInFlight(projectId: string): boolean {
 	return inFlight.get(projectId) ?? false;
+}
+
+type ActiveMemoryRow = {
+	id: string;
+	topic: string | null;
+	content: string | null;
+	confidence: number;
+	curated: number;
+	updatedAt: string | null;
+};
+
+async function ensureGlobalProjectRow(db: DbLike, now: string): Promise<void> {
+	await db
+		.insert(projects)
+		.values({
+			id: GLOBAL_PROJECT_ID,
+			name: "Global",
+			sessionCount: 0,
+			createdAt: now,
+			lastSeen: now,
+		})
+		.onConflictDoNothing()
+		.run();
+}
+
+async function acquireGlobalWriteLock(db: DbLike): Promise<boolean> {
+	const lockResult = await db
+		.update(projects)
+		.set({ consolidationInProgress: 1 })
+		.where(and(eq(projects.id, GLOBAL_PROJECT_ID), eq(projects.consolidationInProgress, 0)))
+		.run();
+
+	const result = lockResult as { rowsAffected?: number; changes?: number };
+	const changes = result.rowsAffected ?? result.changes;
+	return changes !== 0;
+}
+
+async function releaseGlobalWriteLock(db: DbLike): Promise<void> {
+	try {
+		await db
+			.update(projects)
+			.set({ consolidationInProgress: 0 })
+			.where(eq(projects.id, GLOBAL_PROJECT_ID))
+			.run();
+	} catch {
+		// ignore
+	}
+}
+
+const GLOBAL_LOCK_MAX_ATTEMPTS = 50;
+const GLOBAL_LOCK_RETRY_MS = 20;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchActiveGlobalMemories(db: DbLike): Promise<ActiveMemoryRow[]> {
+	return (await db
+		.select()
+		.from(memories)
+		.where(and(eq(memories.projectId, GLOBAL_PROJECT_ID), eq(memories.status, "active")))
+		.all()) as ActiveMemoryRow[];
 }
 
 interface BuildPromptResult {
@@ -198,81 +262,190 @@ export async function runConsolidation(
 		}
 
 		/* 5. Dedup and merge consolidated facts, then mark sessions (all atomic) */
-		await runAtomic(db, async (tx, addStmt) => {
-			const factsToInsert: Fact[] = [];
-			const updates: Array<{ id: string; content?: string; confidence: number }> = [];
 
-			for (const fact of extracted.facts.filter((f) => f.confidence >= 0.7)) {
-				let matched = false;
-				for (const mem of existingMemories) {
-					if (jaccardSimilarity(fact.content, mem.content ?? "") > 0.6) {
-						matched = true;
-						if (mem.curated === 1) {
-							// Corroboration refresh: update curated fact's updated_at (in-batch call)
-							addStmt(tx.update(memories).set({ updatedAt: now }).where(eq(memories.id, mem.id)));
-							break;
-						}
-						if (fact.confidence > mem.confidence) {
-							updates.push({
-								id: mem.id,
-								content: fact.content,
-								confidence: fact.confidence,
-							});
-						} else {
-							updates.push({
-								id: mem.id,
-								confidence: mem.confidence,
-							});
-						}
-						break;
-					}
-				}
-				if (!matched) {
-					factsToInsert.push(fact);
-				}
-			}
+		const mayTouchGlobal = extracted.facts.some(
+			(f) => f.confidence >= 0.7 && f.topic === PREFERENCES_TOPIC,
+		);
 
-			for (const u of updates) {
+		const applyConsolidationWrites = async (existingGlobalMemories: ActiveMemoryRow[]) => {
+			await runAtomic(db, async (tx, addStmt) => {
+				// Ensure global project row exists
 				addStmt(
 					tx
-						.update(memories)
-						.set({
-							updatedAt: now,
-							...(u.content !== undefined ? { content: u.content } : {}),
-							confidence: u.confidence,
+						.insert(projects)
+						.values({
+							id: GLOBAL_PROJECT_ID,
+							name: "Global",
+							sessionCount: 0,
+							createdAt: now,
+							lastSeen: now,
 						})
-						.where(eq(memories.id, u.id)),
+						.onConflictDoNothing(),
 				);
-			}
 
-			for (const f of factsToInsert) {
-				addStmt(
-					tx.insert(memories).values({
-						id: crypto.randomUUID(),
-						projectId,
-						sourceSession: includedSessionIds[0] ?? crypto.randomUUID(),
-						topic: f.topic,
-						content: f.content,
-						confidence: f.confidence,
-						curated: 0,
-						status: "active",
-						createdAt: now,
-						updatedAt: now,
-					}),
-				);
-			}
+				const localFactsToInsert: Fact[] = [];
+				const localUpdates: Array<{ id: string; content?: string; confidence: number }> = [];
+				const globalFactsToInsert: Fact[] = [];
+				const globalUpdates: Array<{ id: string; content?: string; confidence: number }> = [];
 
-			for (const s of allSessions) {
-				if (includedSessionIds.includes(s.id)) {
+				for (const fact of extracted.facts.filter((f) => f.confidence >= 0.7)) {
+					const isGlobal = fact.topic === PREFERENCES_TOPIC;
+					const existingMems = isGlobal ? existingGlobalMemories : existingMemories;
+
+					let matched = false;
+					for (const mem of existingMems) {
+						if (jaccardSimilarity(fact.content, mem.content ?? "") > 0.6) {
+							matched = true;
+							if (mem.curated === 1) {
+								// Corroboration refresh: update curated fact's updated_at (in-batch call)
+								addStmt(tx.update(memories).set({ updatedAt: now }).where(eq(memories.id, mem.id)));
+								break;
+							}
+							const updateEntry = {
+								id: mem.id,
+								...(fact.confidence > mem.confidence ? { content: fact.content } : {}),
+								confidence: fact.confidence > mem.confidence ? fact.confidence : mem.confidence,
+							};
+							if (isGlobal) {
+								globalUpdates.push(updateEntry);
+							} else {
+								localUpdates.push(updateEntry);
+							}
+							break;
+						}
+					}
+					if (!matched) {
+						if (isGlobal) {
+							globalFactsToInsert.push(fact);
+						} else {
+							localFactsToInsert.push(fact);
+						}
+					}
+				}
+
+				for (const u of localUpdates) {
 					addStmt(
 						tx
-							.update(sessions)
-							.set({ consolidated: 1, rawText: null, extractionError: null })
-							.where(eq(sessions.id, s.id)),
+							.update(memories)
+							.set({
+								updatedAt: now,
+								...(u.content !== undefined ? { content: u.content } : {}),
+								confidence: u.confidence,
+							})
+							.where(eq(memories.id, u.id)),
 					);
 				}
+
+				for (const f of localFactsToInsert) {
+					addStmt(
+						tx.insert(memories).values({
+							id: crypto.randomUUID(),
+							projectId,
+							sourceSession: includedSessionIds[0] ?? crypto.randomUUID(),
+							topic: f.topic,
+							content: f.content,
+							confidence: f.confidence,
+							curated: 0,
+							status: "active",
+							createdAt: now,
+							updatedAt: now,
+						}),
+					);
+				}
+
+				for (const u of globalUpdates) {
+					addStmt(
+						tx
+							.update(memories)
+							.set({
+								updatedAt: now,
+								...(u.content !== undefined ? { content: u.content } : {}),
+								confidence: u.confidence,
+							})
+							.where(eq(memories.id, u.id)),
+					);
+				}
+
+				for (const f of globalFactsToInsert) {
+					addStmt(
+						tx.insert(memories).values({
+							id: crypto.randomUUID(),
+							projectId: GLOBAL_PROJECT_ID,
+							sourceSession: includedSessionIds[0] ?? crypto.randomUUID(),
+							topic: f.topic,
+							content: f.content,
+							confidence: f.confidence,
+							curated: 0,
+							status: "active",
+							createdAt: now,
+							updatedAt: now,
+						}),
+					);
+				}
+
+				for (const s of allSessions) {
+					if (includedSessionIds.includes(s.id)) {
+						addStmt(
+							tx
+								.update(sessions)
+								.set({ consolidated: 1, rawText: null, extractionError: null })
+								.where(eq(sessions.id, s.id)),
+						);
+					}
+				}
+			});
+		};
+
+		if (mayTouchGlobal) {
+			await ensureGlobalProjectRow(db, now);
+
+			let acquiredGlobalDbLock = false;
+			for (let attempt = 0; attempt < GLOBAL_LOCK_MAX_ATTEMPTS; attempt++) {
+				while (globalInFlight.get(GLOBAL_PROJECT_ID)) {
+					await sleep(GLOBAL_LOCK_RETRY_MS);
+				}
+				try {
+					acquiredGlobalDbLock = await acquireGlobalWriteLock(db);
+				} catch {
+					// Legacy schema without consolidation_in_progress — proceed without DB lock
+					break;
+				}
+				if (acquiredGlobalDbLock) break;
+				await sleep(GLOBAL_LOCK_RETRY_MS);
 			}
-		});
+
+			if (!acquiredGlobalDbLock) {
+				try {
+					const locked = await db
+						.select({ consolidationInProgress: projects.consolidationInProgress })
+						.from(projects)
+						.where(eq(projects.id, GLOBAL_PROJECT_ID))
+						.get();
+					if ((locked?.consolidationInProgress ?? 0) === 1) {
+						return {
+							consolidated: 0,
+							archived: 0,
+							error: "Global memory write already in progress",
+						};
+					}
+				} catch {
+					// proceed without lock on legacy schema
+				}
+			}
+
+			globalInFlight.set(GLOBAL_PROJECT_ID, true);
+			try {
+				const existingGlobalMemories = await fetchActiveGlobalMemories(db);
+				await applyConsolidationWrites(existingGlobalMemories);
+			} finally {
+				globalInFlight.delete(GLOBAL_PROJECT_ID);
+				if (acquiredGlobalDbLock) {
+					await releaseGlobalWriteLock(db);
+				}
+			}
+		} else {
+			await applyConsolidationWrites([]);
+		}
 
 		return { consolidated: includedSessionIds.length, archived: 0 };
 	} finally {
@@ -296,22 +469,25 @@ export async function runConsolidation(
 export async function runCronConsolidation(
 	db: DbLike,
 	env: { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
+	extractor?: (prompt: string, apiKey: string, model: string) => Promise<Extracted | null>,
 ): Promise<{ projectsProcessed: number; totalSessions: number; totalArchived: number }> {
 	let projectsProcessed = 0;
 	let totalSessions = 0;
 	let totalArchived = 0;
 
-	// Query projects with >=2 unconsolidated sessions
+	// Query projects with >=2 unconsolidated sessions, skipping the global pseudo-project.
+	// Global memories are managed via routing, promotion dedup, and manual /memories curation,
+	// not through project-level cron consolidation.
 	const rows = (await db
 		.select({ projectId: sessions.projectId })
 		.from(sessions)
-		.where(eq(sessions.consolidated, 0))
+		.where(and(eq(sessions.consolidated, 0), ne(sessions.projectId, GLOBAL_PROJECT_ID)))
 		.groupBy(sessions.projectId)
 		.having(sql`count(*) >= 2`)
 		.all()) as Array<{ projectId: string }>;
 
 	for (const row of rows) {
-		const result = await runConsolidation(row.projectId, db, env);
+		const result = await runConsolidation(row.projectId, db, env, extractor);
 		if (!result.error) {
 			projectsProcessed++;
 			totalSessions += result.consolidated;

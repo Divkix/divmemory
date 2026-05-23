@@ -23,6 +23,9 @@ export const TOPIC_LABELS = Object.fromEntries(TOPICS.map((t) => [t.id, t.label]
 	string
 >;
 
+/** Topic for cross-project developer preferences stored under {@link GLOBAL_PROJECT_ID}. */
+export const PREFERENCES_TOPIC = "preferences" as const satisfies TopicId;
+
 export function isValidTopic(topic: string): topic is TopicId {
 	return VALID_TOPICS.includes(topic as TopicId);
 }

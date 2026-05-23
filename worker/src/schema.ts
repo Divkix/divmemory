@@ -1,5 +1,8 @@
 import { foreignKey, index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
+/** Reserved project ID for cross-project developer preferences and global context. */
+export const GLOBAL_PROJECT_ID = "global";
+
 export const projects = sqliteTable("projects", {
 	id: text("id").primaryKey(),
 	name: text("name"),
