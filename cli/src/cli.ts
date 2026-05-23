@@ -139,8 +139,16 @@ export async function findSessionFiles(dir: string, limit = DEFAULT_LIMIT): Prom
 
 const decodeCache = new Map<string, string>();
 
+function getMappingsMtimeMs(): number {
+	try {
+		return statSync(mappingsPath()).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
 function getDecodeCacheKey(encoded: string): string {
-	return `${mappingsPath()}::${encoded}`;
+	return `${mappingsPath()}::${getMappingsMtimeMs()}::${encoded}`;
 }
 
 export function decodeProjectDir(encoded: string): string | null {

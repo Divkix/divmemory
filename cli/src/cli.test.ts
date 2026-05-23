@@ -1930,6 +1930,30 @@ describe("bootstrap cli", () => {
 			expect(lookupProjectMapping(resolve(staleDir))).toBe("github.com/stale/wrong");
 		});
 
+		it("2.5.c invalidates decode cache when mappings file changes after filesystem decode", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir, getMappingsFilePath } = mod;
+			expect(decodeProjectDir).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const worktreeDir = resolve(mappingsHome, "deleted-worktree");
+			mkdirSync(worktreeDir, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(worktreeDir);
+
+			expect(decodeProjectDir(encoded)).toBe(worktreeDir);
+
+			rmSync(worktreeDir, { recursive: true, force: true });
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [worktreeDir]: "github.com/cloudflare/vinext" }),
+				"utf-8",
+			);
+
+			expect(decodeProjectDir(encoded)).toBe(worktreeDir);
+		});
+
 		it("2.7 decodeProjectDir correctly decodes directories with literal dashes inside them by checking disk", async () => {
 			const mod = await loadCliModule();
 			const { decodeProjectDir } = mod;
