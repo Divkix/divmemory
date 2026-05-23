@@ -196,14 +196,7 @@ export function createContextRoute(app: any, db?: DbLike) {
 
 		const factCount = rows.length;
 		let latestRow: string | null = null;
-		for (const row of rows) {
-			if (!row.updatedAt) continue;
-			if (!latestRow || row.updatedAt > latestRow) {
-				latestRow = row.updatedAt;
-			}
-		}
-		// Also check global rows for latest timestamp
-		for (const row of globalRows) {
+		for (const row of [...rows, ...globalRows]) {
 			if (!row.updatedAt) continue;
 			if (!latestRow || row.updatedAt > latestRow) {
 				latestRow = row.updatedAt;

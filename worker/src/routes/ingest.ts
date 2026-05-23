@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { DbLike } from "../lib/db";
 import { runAtomic } from "../lib/db";
+import { PREFERENCES_TOPIC } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 
@@ -276,27 +277,14 @@ export async function processExtractionAfter(
 			// biome-ignore lint/style/noNonNullAssertion: guarded by isExtractionError check above
 			const filtered = filterFacts(result.extracted!.facts);
 			if (filtered.length > 0) {
-				// Separate facts: preferences route to global, others stay local
-				const localFacts: Fact[] = [];
-				const globalFacts: Fact[] = [];
-				for (const f of filtered) {
-					if (f.topic === "preferences") {
-						globalFacts.push(f);
-					} else {
-						localFacts.push(f);
-					}
-				}
-
-				// Handle local facts
-				if (localFacts.length > 0) {
-					const { factsToInsert, updates } = await dedupFacts(localFacts, projectId, tx);
+				const commitFacts = async (facts: Fact[], targetProjectId: string) => {
+					const { factsToInsert, updates } = await dedupFacts(facts, targetProjectId, tx);
 					factsWritten += factsToInsert.length + updates.length;
-
 					for (const f of factsToInsert) {
 						addStmt(
 							tx.insert(memories).values({
 								id: crypto.randomUUID(),
-								projectId,
+								projectId: targetProjectId,
 								sourceSession: sessionId,
 								topic: f.topic,
 								content: f.content,
@@ -308,7 +296,6 @@ export async function processExtractionAfter(
 							}),
 						);
 					}
-
 					for (const u of updates) {
 						addStmt(
 							tx
@@ -321,11 +308,14 @@ export async function processExtractionAfter(
 								.where(eq(memories.id, u.id)),
 						);
 					}
-				}
+				};
 
-				// Handle global (preferences) facts — dedup against global namespace
+				const localFacts = filtered.filter((f) => f.topic !== PREFERENCES_TOPIC);
+				const globalFacts = filtered.filter((f) => f.topic === PREFERENCES_TOPIC);
+
+				if (localFacts.length > 0) await commitFacts(localFacts, projectId);
 				if (globalFacts.length > 0) {
-					// Ensure global project row exists
+					// Upsert the pseudo-project row for global preferences
 					addStmt(
 						tx
 							.insert(projects)
@@ -338,43 +328,7 @@ export async function processExtractionAfter(
 							})
 							.onConflictDoNothing(),
 					);
-
-					const { factsToInsert: globalToInsert, updates: globalUpdates } = await dedupFacts(
-						globalFacts,
-						GLOBAL_PROJECT_ID,
-						tx,
-					);
-					factsWritten += globalToInsert.length + globalUpdates.length;
-
-					for (const f of globalToInsert) {
-						addStmt(
-							tx.insert(memories).values({
-								id: crypto.randomUUID(),
-								projectId: GLOBAL_PROJECT_ID,
-								sourceSession: sessionId,
-								topic: f.topic,
-								content: f.content,
-								confidence: f.confidence,
-								curated: 0,
-								status: "active",
-								createdAt: now,
-								updatedAt: now,
-							}),
-						);
-					}
-
-					for (const u of globalUpdates) {
-						addStmt(
-							tx
-								.update(memories)
-								.set({
-									updatedAt: now,
-									...(u.content !== undefined ? { content: u.content } : {}),
-									confidence: u.confidence,
-								})
-								.where(eq(memories.id, u.id)),
-						);
-					}
+					await commitFacts(globalFacts, GLOBAL_PROJECT_ID);
 				}
 			}
 

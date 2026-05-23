@@ -1,7 +1,8 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import type { DbLike } from "../lib/db";
 import { runAtomic } from "../lib/db";
 import { callFirepass } from "../lib/firepass";
+import { PREFERENCES_TOPIC } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 
@@ -234,7 +235,7 @@ export async function runConsolidation(
 			const globalUpdates: Array<{ id: string; content?: string; confidence: number }> = [];
 
 			for (const fact of extracted.facts.filter((f) => f.confidence >= 0.7)) {
-				const isGlobal = fact.topic === "preferences";
+				const isGlobal = fact.topic === PREFERENCES_TOPIC;
 				const existingMems = isGlobal ? existingGlobalMemories : existingMemories;
 
 				let matched = false;
@@ -374,7 +375,7 @@ export async function runCronConsolidation(
 	const rows = (await db
 		.select({ projectId: sessions.projectId })
 		.from(sessions)
-		.where(and(eq(sessions.consolidated, 0), sql`${sessions.projectId} != ${GLOBAL_PROJECT_ID}`))
+		.where(and(eq(sessions.consolidated, 0), ne(sessions.projectId, GLOBAL_PROJECT_ID)))
 		.groupBy(sessions.projectId)
 		.having(sql`count(*) >= 2`)
 		.all()) as Array<{ projectId: string }>;
