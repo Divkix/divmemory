@@ -1,9 +1,32 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getProjectId, processSessionStart } from "../scripts/session-start.mjs";
+
+async function waitForMapping(
+	tmpDir: string,
+	key: string,
+	expected?: string,
+	timeoutMs = 2000,
+): Promise<Record<string, string> | null> {
+	const mappingsFile = join(tmpDir, "project_mappings.json");
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (existsSync(mappingsFile)) {
+			const mappings = JSON.parse(readFileSync(mappingsFile, "utf-8")) as Record<string, string>;
+			if (expected === undefined) {
+				if (mappings[key] === undefined) return mappings;
+			} else if (mappings[key] === expected) {
+				return mappings;
+			}
+		}
+		await new Promise((r) => setTimeout(r, 10));
+	}
+	if (!existsSync(mappingsFile)) return null;
+	return JSON.parse(readFileSync(mappingsFile, "utf-8")) as Record<string, string>;
+}
 
 describe("session-start hook", () => {
 	let tmpDir: string;
@@ -493,6 +516,173 @@ describe("session-start hook", () => {
 			});
 
 			expect(existsSync(cachePath)).toBe(false);
+		});
+	});
+
+	describe("project path mappings (issue #19)", () => {
+		it("writes path-to-remote mapping on session-start for git repos (VAL-PLUGIN-109)", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const gitDir = join(tmpDir, "git-worktree-start");
+			const { execSync } = await import("node:child_process");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/cloudflare/vinext.git", {
+				cwd: gitDir,
+			});
+
+			await processSessionStart(makeStdin({ cwd: gitDir }), {
+				fetch: mockFetch(),
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			const mappings = await waitForMapping(
+				tmpDir,
+				resolve(gitDir),
+				"github.com/cloudflare/vinext",
+			);
+			expect(mappings).not.toBeNull();
+			expect(mappings?.[resolve(gitDir)]).toBe("github.com/cloudflare/vinext");
+		});
+
+		it("does not write mapping when project id is local-* fallback (VAL-PLUGIN-110)", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const noGitDir = join(tmpDir, "no-git-mapping-start");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(noGitDir, { recursive: true });
+
+			await processSessionStart(makeStdin({ cwd: noGitDir }), {
+				fetch: mockFetch(),
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			const mappings = await waitForMapping(tmpDir, resolve(noGitDir));
+			if (mappings) {
+				expect(mappings[resolve(noGitDir)]).toBeUndefined();
+			}
+		});
+
+		it("logs mapping write errors to stderr without blocking stdout (VAL-PLUGIN-111)", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const gitDir = join(tmpDir, "git-mapping-error");
+			const { execSync } = await import("node:child_process");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/error-test.git", {
+				cwd: gitDir,
+			});
+
+			const mappingsMod = await import("../scripts/project-mappings.mjs");
+			const spy = vi
+				.spyOn(mappingsMod, "writeProjectMapping")
+				.mockRejectedValueOnce(new Error("disk full"));
+
+			const result = await processSessionStart(makeStdin({ cwd: gitDir }), {
+				fetch: mockFetch(),
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			await new Promise((r) => setTimeout(r, 50));
+			spy.mockRestore();
+
+			expect(result.exitCode).toBe(0);
+			expect(capturedStderr.join("")).toContain("Failed to persist project mapping");
+			expect(capturedStdout.join("").length).toBeGreaterThan(0);
+		});
+
+		it("writes mapping even when cache short-circuits Worker fetch (VAL-PLUGIN-112)", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const gitDir = join(tmpDir, "git-cached-start");
+			const { execSync } = await import("node:child_process");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/cached-start.git", {
+				cwd: gitDir,
+			});
+
+			const projectId = await getProjectId(gitDir);
+			const cachePath = join(tmpDir, "cache", `${encodeURIComponent(projectId)}.txt`);
+			mkdirSync(join(tmpDir, "cache"), { recursive: true });
+			writeFileSync(cachePath, "## divmemory — Cached\n\n- fact\n", "utf-8");
+
+			await processSessionStart(makeStdin({ cwd: gitDir }), {
+				fetch: mockFetch(),
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			expect(fetchCalls).toHaveLength(0);
+			const mappings = await waitForMapping(
+				tmpDir,
+				resolve(gitDir),
+				"github.com/divkix/cached-start",
+			);
+			expect(mappings?.[resolve(gitDir)]).toBe("github.com/divkix/cached-start");
+		});
+
+		it("writes mapping when DIVMEMORY_API_KEY is unset (VAL-PLUGIN-113)", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			delete process.env.DIVMEMORY_API_KEY;
+			const gitDir = join(tmpDir, "git-no-api-key");
+			const { execSync } = await import("node:child_process");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/no-key.git", { cwd: gitDir });
+
+			await processSessionStart(makeStdin({ cwd: gitDir }), {
+				fetch: mockFetch(),
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+			});
+
+			const mappings = await waitForMapping(tmpDir, resolve(gitDir), "github.com/divkix/no-key");
+			expect(mappings?.[resolve(gitDir)]).toBe("github.com/divkix/no-key");
+		});
+
+		it("divmemory runtime processSessionStart writes mappings for git repos", async () => {
+			const { processSessionStart: runtimeSessionStart } = await import(
+				"../../plugins/divmemory/hooks/runtime.mjs"
+			);
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const gitDir = join(tmpDir, "runtime-git-start");
+			const { execSync } = await import("node:child_process");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/runtime-start.git", {
+				cwd: gitDir,
+			});
+
+			await runtimeSessionStart(
+				JSON.stringify({
+					session_id: "runtime-start-map",
+					cwd: gitDir,
+					hook_event_name: "SessionStart",
+				}),
+				{
+					fetch: mockFetch(),
+					stderr: (s: string) => capturedStderr.push(s),
+					stdout: (s: string) => capturedStdout.push(s),
+				},
+			);
+
+			const mappings = await waitForMapping(
+				tmpDir,
+				resolve(gitDir),
+				"github.com/divkix/runtime-start",
+			);
+			expect(mappings?.[resolve(gitDir)]).toBe("github.com/divkix/runtime-start");
 		});
 	});
 });

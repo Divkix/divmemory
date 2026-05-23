@@ -7,9 +7,14 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-import { divmemoryHome, getProjectId } from "./project-mappings.mjs";
+import {
+	divmemoryHome,
+	getProjectId,
+	hasGitOrigin,
+	writeProjectMapping,
+} from "./project-mappings.mjs";
 
 export { getProjectId };
 
@@ -90,6 +95,19 @@ export async function processSessionStart(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(cwd || process.cwd());
+	const resolvedCwd = resolve(cwd || process.cwd());
+	void (async () => {
+		try {
+			if (await hasGitOrigin(resolvedCwd)) {
+				await writeProjectMapping(resolvedCwd, projectId);
+			}
+		} catch (err) {
+			stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`);
+		}
+	})().catch((err) =>
+		stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`),
+	);
+
 	const cached = readCachedContext(projectId);
 
 	if (!API_KEY) {

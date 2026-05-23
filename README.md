@@ -93,9 +93,28 @@ Example:
 }
 ```
 
-- **Written** on each **session-end** when `git remote get-url origin` succeeds (not written for `local-*` fallback IDs).
+- **Written** on each **session-start** and **session-end** when `git remote get-url origin` succeeds (not written for `local-*` fallback IDs). Session-start writes are fire-and-forget so mappings persist even if the session crashes before end.
 - **Read** by the bootstrap CLI when git cannot run on that path anymore (e.g. deleted worktree folder), before falling back to a hashed `local-*` project ID.
-- **Requirement:** Run at least one session-end on a path while it still exists on disk, so a later bootstrap of historical sessions under that encoded path resolves to the same project.
+- **Requirement:** Run at least one session-start or session-end on a path while it still exists on disk, so a later bootstrap of historical sessions under that encoded path resolves to the same project.
+- **Fast-path gap:** The optional shell `session-start-fast.sh` hook does not write `project_mappings.json`; use the Node session-start hook for mapping persistence.
+
+**Manual smoke test (7 steps):**
+
+1. Use a real git worktree path (with `origin` remote configured).
+2. Run a normal Droid session (session-start and session-end hooks) or trigger session-end so a mapping is written.
+3. Confirm `~/.divmemory/project_mappings.json` (or `$DIVMEMORY_HOME/project_mappings.json`) contains an entry for that absolute path.
+4. Delete or rename the worktree directory on disk.
+5. Run `npx divmemory-bootstrap --dry-run` (or full bootstrap) on the encoded session directory under `~/.factory/sessions/`.
+6. Confirm dry-run or ingest output shows the canonical `project_id` (e.g. `github.com/org/my-app`), not `local-*`.
+7. (Optional) Run `npx divmemory-bootstrap --report-mapping-duplicates` to list each mapped path with its canonical ID and the `local-*` ID bootstrap would use without the mapping file.
+
+**Dedup report (local only):**
+
+```bash
+npx divmemory-bootstrap --report-mapping-duplicates
+```
+
+Prints tab-separated lines: `absolute_path`, `canonical_project_id`, `would_be_local_id`. No Worker or API key required.
 
 Set Worker secrets:
 

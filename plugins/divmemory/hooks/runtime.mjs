@@ -209,6 +209,19 @@ export async function processSessionStart(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(payload.cwd || process.cwd());
+	const resolvedCwd = resolve(payload.cwd || process.cwd());
+	void (async () => {
+		try {
+			if (await hasGitOrigin(resolvedCwd)) {
+				await writeProjectMapping(resolvedCwd, projectId);
+			}
+		} catch (err) {
+			stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`);
+		}
+	})().catch((err) =>
+		stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`),
+	);
+
 	const cached = readCache(projectId);
 	const key = apiKey();
 	if (!key) {
