@@ -858,4 +858,45 @@ describe("consolidation promotion to global", () => {
 		expect(localMems.length).toBeGreaterThan(0);
 		expect(localMems[0].content).toBe("Project uses React");
 	});
+
+	it("serializes concurrent global preference writes across projects", async () => {
+		const sharedPref = "Developer prefers tabs over spaces";
+		const extractor = makePromotionExtractor([
+			{ topic: "preferences", content: sharedPref, confidence: 0.9 },
+		]);
+
+		seedSessions(testDb.sqlite, "proj-race-a", 2, {
+			rawText: "User: tabs\nAssistant: ok",
+		});
+		seedSessions(testDb.sqlite, "proj-race-b", 2, {
+			rawText: "User: tabs again\nAssistant: ok",
+		});
+
+		const [resultA, resultB] = await Promise.all([
+			runConsolidation(
+				"proj-race-a",
+				testDb.db,
+				{ FIREWORKS_API_KEY: "mock-key", FIREWORKS_MODEL: "test-model" },
+				extractor,
+			),
+			runConsolidation(
+				"proj-race-b",
+				testDb.db,
+				{ FIREWORKS_API_KEY: "mock-key", FIREWORKS_MODEL: "test-model" },
+				extractor,
+			),
+		]);
+
+		expect(resultA.error).toBeUndefined();
+		expect(resultB.error).toBeUndefined();
+
+		const globalMems = testDb.db
+			.select()
+			.from(memories)
+			.where(and(eq(memories.projectId, GLOBAL_PROJECT_ID), eq(memories.status, "active")))
+			.all() as (typeof memories.$inferInsert)[];
+
+		const matching = globalMems.filter((m) => m.content === sharedPref);
+		expect(matching).toHaveLength(1);
+	});
 });

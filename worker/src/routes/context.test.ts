@@ -476,19 +476,37 @@ describe("GET /context", () => {
 			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
 			expect(res.status).toBe(200);
 			const body = await res.text();
-			// Find the global section bounds
+			// Find the global section bounds (next ### or ## after global header)
 			const globalSectionStart = body.indexOf("### Global Preferences");
-			const projectContextHeader = body.indexOf("###");
+			const nextH3 = globalSectionStart >= 0 ? body.indexOf("###", globalSectionStart + 1) : -1;
+			const nextH2 = globalSectionStart >= 0 ? body.indexOf("## ", globalSectionStart + 1) : -1;
 			const globalSectionEnd =
-				projectContextHeader > globalSectionStart
-					? projectContextHeader
-					: body.indexOf("## ", globalSectionStart + 1);
-			const globalSectionLen =
-				globalSectionStart >= 0
-					? (globalSectionEnd > globalSectionStart ? globalSectionEnd : body.length) -
-						globalSectionStart
-					: 0;
+				globalSectionStart >= 0 ? (nextH3 >= 0 ? nextH3 : nextH2 >= 0 ? nextH2 : body.length) : 0;
+			const globalSectionLen = globalSectionStart >= 0 ? globalSectionEnd - globalSectionStart : 0;
 			expect(globalSectionLen).toBeLessThanOrEqual(1100); // ~1000 + header overhead
+		});
+
+		it("B4b — unused global budget flows to project content", async () => {
+			const reclaimMarker = "BUDGET_RECLAIM_MARKER_tail_fact";
+			await seedMemories(testDb.db, GLOBAL_PROJECT_ID, [
+				{ topic: "preferences", content: "Use tabs" },
+			]);
+			await seedMemories(testDb.db, "my-proj-reclaim", [
+				{ topic: "general", content: `Project fact ${"a".repeat(500)}` },
+				{ topic: "general", content: `Project fact ${"b".repeat(500)}` },
+				{ topic: "general", content: `Project fact ${"c".repeat(500)}` },
+				{ topic: "general", content: `Project fact ${"d".repeat(500)}` },
+				{ topic: "general", content: `Project fact ${"e".repeat(500)}` },
+				{ topic: "general", content: `Project fact ${"f".repeat(500)}` },
+				{ topic: "general", content: reclaimMarker },
+			]);
+			const req = new Request("http://localhost/context?project=my-proj-reclaim&max_chars=4000", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body).toContain(reclaimMarker);
 		});
 
 		it("B5 — no global placeholder when no global memories exist", async () => {

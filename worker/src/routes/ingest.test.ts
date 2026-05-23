@@ -10,6 +10,7 @@ import { createTestDb } from "../test-helpers";
 import {
 	createIngestRoute,
 	jaccardSimilarity,
+	processExtractionAfter,
 	recoverJSON,
 	truncateConversationFromEnd,
 } from "./ingest";
@@ -1146,6 +1147,111 @@ describe("Queue-Based Ingest Pipeline (TDD)", () => {
 			// Should resolve successfully without throwing
 			await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
 		});
+	});
+});
+
+describe("processExtractionAfter reserved global project_id", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+
+	beforeEach(() => {
+		testDb = createTestDb();
+	});
+
+	it("rejects non-preferences facts with project_id global", async () => {
+		const now = new Date().toISOString();
+		await testDb.db.insert(projects).values({
+			id: "proj/bad-global-fact",
+			name: "Bad Global Fact",
+			sessionCount: 1,
+			createdAt: now,
+			lastSeen: now,
+		});
+		await testDb.db.insert(sessions).values({
+			id: "sess-bad-global-fact",
+			projectId: "proj/bad-global-fact",
+			source: "droid",
+			rawText: "User: test",
+			consolidated: 0,
+			createdAt: now,
+		});
+
+		await expect(
+			processExtractionAfter(
+				testDb.db,
+				{
+					session_id: "sess-bad-global-fact",
+					project_id: "proj/bad-global-fact",
+					source: "droid",
+					conversation: "User: test",
+				},
+				{
+					extracted: {
+						facts: [
+							{
+								topic: "general",
+								content: "Should not land in global namespace",
+								confidence: 0.9,
+								project_id: GLOBAL_PROJECT_ID,
+							} as { topic: string; content: string; confidence: number; project_id: string },
+						],
+					},
+					rawResponse: null,
+				},
+				now,
+			),
+		).rejects.toThrow(/reserved for preferences topic only/);
+	});
+
+	it("allows preferences facts with project_id global", async () => {
+		const now = new Date().toISOString();
+		await testDb.db.insert(projects).values({
+			id: "proj/ok-global-fact",
+			name: "Ok Global Fact",
+			sessionCount: 1,
+			createdAt: now,
+			lastSeen: now,
+		});
+		await testDb.db.insert(sessions).values({
+			id: "sess-ok-global-fact",
+			projectId: "proj/ok-global-fact",
+			source: "droid",
+			rawText: "User: tabs",
+			consolidated: 0,
+			createdAt: now,
+		});
+
+		const factsWritten = await processExtractionAfter(
+			testDb.db,
+			{
+				session_id: "sess-ok-global-fact",
+				project_id: "proj/ok-global-fact",
+				source: "droid",
+				conversation: "User: tabs",
+			},
+			{
+				extracted: {
+					facts: [
+						{
+							topic: "preferences",
+							content: "Developer prefers tabs",
+							confidence: 0.9,
+							project_id: GLOBAL_PROJECT_ID,
+						} as { topic: string; content: string; confidence: number; project_id: string },
+					],
+				},
+				rawResponse: null,
+			},
+			now,
+		);
+
+		expect(factsWritten).toBe(1);
+		const globalMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, GLOBAL_PROJECT_ID))
+			.all();
+		expect(globalMems).toHaveLength(1);
+		expect(globalMems[0]?.content).toBe("Developer prefers tabs");
 	});
 });
 

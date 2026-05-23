@@ -276,6 +276,14 @@ export async function processExtractionAfter(
 		} else {
 			// biome-ignore lint/style/noNonNullAssertion: guarded by isExtractionError check above
 			const filtered = filterFacts(result.extracted!.facts);
+			for (const f of filtered) {
+				const factProjectId = (f as { project_id?: string }).project_id;
+				if (factProjectId === GLOBAL_PROJECT_ID && f.topic !== PREFERENCES_TOPIC) {
+					throw new Error(
+						"Invalid fact: project_id 'global' is reserved for preferences topic only",
+					);
+				}
+			}
 			if (filtered.length > 0) {
 				const commitFacts = async (facts: Fact[], targetProjectId: string) => {
 					const { factsToInsert, updates } = await dedupFacts(facts, targetProjectId, tx);

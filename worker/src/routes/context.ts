@@ -227,8 +227,9 @@ export function createContextRoute(app: any, db?: DbLike) {
 		const globalSectionText = formatGlobalSection(globalFacts);
 		const overrideNote = formatGlobalOverrideNote(globalCount);
 
-		// Calculate budget: global gets max 25%, project gets the rest
-		const globalBudget = Math.floor(maxChars * GLOBAL_BUDGET_FRACTION);
+		// Calculate budget: global gets at most 25%; unused cap flows to project content
+		const globalCap = Math.floor(maxChars * GLOBAL_BUDGET_FRACTION);
+		const globalBudget = Math.min(globalCap, globalSectionText.length);
 		const projectBudget = maxChars - globalBudget;
 
 		const totalFactCount = factCount + globalCount;
