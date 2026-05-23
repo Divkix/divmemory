@@ -228,28 +228,9 @@ export async function resolveProjectId(cwd, options = {}) {
 		return normalizeGitRemote(result);
 	} catch {
 		if (!existsSync(absolutePath)) {
-			let mappings = {};
-			try {
-				const raw = readFileSync(mappingsPath(options.home), "utf-8");
-				mappings = JSON.parse(raw);
-				if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
-					mappings = {};
-				}
-			} catch {
-				mappings = {};
-			}
-
-			if (absolutePath.startsWith("/")) {
-				const direct = mappings[absolutePath];
-				if (typeof direct === "string") return direct;
-				const byEncoded = mappings[encodePath(absolutePath)];
-				if (typeof byEncoded === "string") return byEncoded;
-			} else {
-				const direct = mappings[absolutePath];
-				if (typeof direct === "string") return direct;
-			}
+			const mapped = lookupProjectMapping(absolutePath, options);
+			if (typeof mapped === "string") return mapped;
 		}
-
 		return localProjectId(absolutePath);
 	}
 }
@@ -276,7 +257,7 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
 		}
 
 		const encodedKey = encodePath(absolutePath);
-		if (mappings[absolutePath] === projectId || mappings[encodedKey] === projectId) {
+		if (mappings[absolutePath] === projectId && mappings[encodedKey] === projectId) {
 			return;
 		}
 
