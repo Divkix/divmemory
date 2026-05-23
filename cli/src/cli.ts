@@ -94,10 +94,15 @@ export function generateMappingReport(home?: string): string[] {
 		if (entries.length === 0) {
 			return ["No project mappings found."];
 		}
-		return entries.map(
-			([absolutePath, canonicalId]) =>
-				`${absolutePath}\t${canonicalId}\t${computeLocalProjectId(absolutePath)}`,
-		);
+		return entries.map(([absolutePath, canonicalId]) => {
+			let decodedPath = absolutePath;
+			try {
+				decodedPath = decodeURIComponent(absolutePath);
+			} catch {
+				// Fallback to original absolutePath
+			}
+			return `${decodedPath}\t${canonicalId}\t${computeLocalProjectId(decodedPath)}`;
+		});
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code;
 		if (code === "ENOENT") {

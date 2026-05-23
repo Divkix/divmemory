@@ -2108,6 +2108,28 @@ describe("bootstrap cli", () => {
 			expect(localId).toMatch(/^local-[a-f0-9]{12}-my-worktree$/);
 		});
 
+		it("decodes URL-encoded absolute path keys in seeded mappings (VAL-CLI-045)", async () => {
+			const decodedPath = resolve(mappingsHome, "my-worktree with spaces");
+			const encodedPath = encodeURIComponent(decodedPath);
+			mkdirSync(decodedPath, { recursive: true });
+			writeFileSync(
+				join(mappingsHome, "project_mappings.json"),
+				JSON.stringify({ [encodedPath]: "github.com/org/my-app-spaces" }, null, 2),
+				"utf-8",
+			);
+
+			const mod = await loadCliModule();
+			const { generateMappingReport, computeLocalProjectId } = mod;
+			expect(generateMappingReport).toBeDefined();
+
+			const lines = generateMappingReport(mappingsHome);
+			const expectedLocalId = computeLocalProjectId(decodedPath);
+			expect(lines.some((line) => line.includes(decodedPath))).toBe(true);
+			expect(lines.some((line) => line.includes(encodedPath))).toBe(false);
+			expect(lines.some((line) => line.includes("github.com/org/my-app-spaces"))).toBe(true);
+			expect(lines.some((line) => line.includes(expectedLocalId))).toBe(true);
+		});
+
 		it("handles missing and empty mappings file gracefully (VAL-CLI-042)", async () => {
 			const mod = await loadCliModule();
 			const { generateMappingReport } = mod;
