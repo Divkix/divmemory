@@ -1808,6 +1808,23 @@ describe("bootstrap cli", () => {
 			const projectId = await getProjectId(absolutePath);
 			expect(projectId).toBe(canonicalId);
 		});
+
+		it("2.7 decodeProjectDir correctly decodes directories with literal dashes inside them by checking disk", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir } = mod;
+			expect(decodeProjectDir).toBeDefined();
+
+			// Create a directory with literal dashes in the path inside our tmpDir
+			const testDir = join(tmpDir, "vinext-earnest");
+			mkdirSync(testDir, { recursive: true });
+
+			// The encoded key for testDir (e.g. /tmp/divmemory-cli-xxxx/vinext-earnest)
+			// should be -tmp-divmemory-cli-xxxx-vinext-earnest
+			const encoded = `-${testDir.slice(1).replace(/\//g, "-")}`;
+
+			const decoded = decodeProjectDir(encoded);
+			expect(decoded).toBe(testDir);
+		});
 	});
 
 	describe("VAL-CLI — URL & Network Edge Cases", () => {

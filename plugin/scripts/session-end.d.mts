@@ -1,6 +1,7 @@
 export {
 	divmemoryHome,
 	getProjectId,
+	getProjectName,
 	lookupProjectMapping,
 	mappingsPath,
 	resolveProjectId,

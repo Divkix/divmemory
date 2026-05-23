@@ -141,25 +141,45 @@ export function decodeProjectDir(encoded: string): string | null {
 	// The encoded format replaces / with - (e.g. /Users/div/projects/my-app -> -Users-div-projects-my-app)
 	if (!encoded.startsWith("-")) return null;
 	const rest = encoded.slice(1);
-	const dashCount = (rest.match(/-/g) || []).length;
+	const dashPositions: number[] = [];
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "-") dashPositions.push(i);
+	}
+	const dashCount = dashPositions.length;
+
+	function getCombinations(indices: number[], choose: number): number[][] {
+		const result: number[][] = [];
+		function helper(start: number, combo: number[]) {
+			if (combo.length === choose) {
+				result.push([...combo]);
+				return;
+			}
+			for (let i = start; i < indices.length; i++) {
+				combo.push(indices[i]);
+				helper(i + 1, combo);
+				combo.pop();
+			}
+		}
+		helper(0, []);
+		return result;
+	}
 
 	// Try all combinations of treating each dash as either "/" or "-".
 	// Start with the assumption that ALL dashes were originally slashes (most common case for paths),
-	// then progressively try fewer replacements from the right, checking which decoded path exists.
+	// then progressively try fewer replacements, checking which decoded path exists.
 	for (let k = dashCount; k >= 0; k--) {
-		const dashPositions: number[] = [];
-		for (let i = 0; i < rest.length; i++) {
-			if (rest[i] === "-") dashPositions.push(i);
-		}
-		const chars = rest.split("");
-		for (let i = 0; i < k; i++) {
-			chars[dashPositions[i]] = "/";
-		}
-		const attempt = `/${chars.join("")}`;
-		try {
-			if (statSync(attempt).isDirectory()) return attempt;
-		} catch {
-			// ignore
+		const combos = getCombinations(dashPositions, k);
+		for (const combo of combos) {
+			const chars = rest.split("");
+			for (const pos of combo) {
+				chars[pos] = "/";
+			}
+			const attempt = `/${chars.join("")}`;
+			try {
+				if (statSync(attempt).isDirectory()) return attempt;
+			} catch {
+				// ignore
+			}
 		}
 	}
 

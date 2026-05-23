@@ -44,7 +44,13 @@ async function withMappingFileLock(home, fn) {
 			handle = await open(lockPath, "wx");
 			// Write metadata (pid and timestamp)
 			const metadata = JSON.stringify({ pid: process.pid, timestamp: Date.now() });
-			await handle.writeFile(metadata, "utf-8");
+			try {
+				await handle.writeFile(metadata, "utf-8");
+			} catch (writeErr) {
+				await handle.close().catch(() => {});
+				await unlink(lockPath).catch(() => {});
+				throw writeErr;
+			}
 			try {
 				return await fn();
 			} finally {
@@ -60,14 +66,13 @@ async function withMappingFileLock(home, fn) {
 				const content = await readFile(lockPath, "utf-8").catch(() => null);
 				if (content) {
 					const info = JSON.parse(content);
-					const age = Date.now() - info.timestamp;
 					let pidExists = true;
 					try {
 						process.kill(info.pid, 0);
 					} catch {
 						pidExists = false;
 					}
-					if (age > LOCK_STALE_MS || !pidExists) {
+					if (!pidExists) {
 						isStale = true;
 					}
 				} else {
@@ -130,7 +135,18 @@ export function normalizeGitRemote(url) {
 	normalized = normalized.toLowerCase();
 	normalized = normalized.replace(/^[a-z]+:\/\//, "");
 	if (normalized.startsWith("git@")) {
-		normalized = normalized.replace(/^git@/, "").replace(":", "/");
+		const stripped = normalized.replace(/^git@/, "");
+		const colonIndex = stripped.indexOf(":");
+		if (colonIndex >= 0) {
+			const afterColon = stripped.slice(colonIndex + 1);
+			if (/^\d+\//.test(afterColon)) {
+				normalized = stripped;
+			} else {
+				normalized = `${stripped.slice(0, colonIndex)}/${afterColon}`;
+			}
+		} else {
+			normalized = stripped;
+		}
 	}
 	return normalized;
 }
