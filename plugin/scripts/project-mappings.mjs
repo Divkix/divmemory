@@ -16,7 +16,7 @@ export function divmemoryHome(home) {
 }
 
 export function getProjectName(projectId) {
-	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
+	const localMatch = projectId.match(/^local-[a-f0-9]{12}-([^/]+)$/);
 	if (localMatch) return localMatch[1] ?? projectId;
 	const lastSlash = projectId.lastIndexOf("/");
 	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
@@ -252,10 +252,14 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
 			const raw = await readFile(path, "utf-8");
 			mappings = JSON.parse(raw);
 			if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
-				mappings = {};
+				throw new Error(`Invalid mappings file: ${path}`);
 			}
-		} catch {
-			mappings = {};
+		} catch (err) {
+			if (err?.code === "ENOENT") {
+				mappings = {};
+			} else {
+				throw err;
+			}
 		}
 
 		if (mappings[absolutePath] === projectId) {
@@ -288,8 +292,7 @@ export function writeProjectMapping(absolutePath, projectId, options = {}) {
 	const work = (writeChains.get(homeKey) ?? Promise.resolve()).then(() =>
 		writeProjectMappingUnlocked(absolutePath, projectId, options),
 	);
-	// Best-effort: chain writes but don't expose errors to callers
 	const settled = work.catch(() => {});
 	writeChains.set(homeKey, settled);
-	return settled;
+	return work;
 }

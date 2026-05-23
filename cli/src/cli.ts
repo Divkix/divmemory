@@ -139,12 +139,17 @@ export async function findSessionFiles(dir: string, limit = DEFAULT_LIMIT): Prom
 
 const decodeCache = new Map<string, string>();
 
+function getDecodeCacheKey(encoded: string): string {
+	return `${mappingsPath()}::${encoded}`;
+}
+
 export function decodeProjectDir(encoded: string): string | null {
 	// The encoded format replaces / with - (e.g. /Users/div/projects/my-app -> -Users-div-projects-my-app)
 	if (!encoded.startsWith("-")) return null;
 
-	if (decodeCache.has(encoded)) {
-		return decodeCache.get(encoded) ?? null;
+	const cacheKey = getDecodeCacheKey(encoded);
+	if (decodeCache.has(cacheKey)) {
+		return decodeCache.get(cacheKey) ?? null;
 	}
 
 	const rest = encoded.slice(1);
@@ -165,7 +170,7 @@ export function decodeProjectDir(encoded: string): string | null {
 	// Try to resolve by checking filesystem (handles paths with literal dashes)
 	const resolved = resolveDecodedPath(segments);
 	if (resolved) {
-		decodeCache.set(encoded, resolved);
+		decodeCache.set(cacheKey, resolved);
 		return resolved;
 	}
 
@@ -176,16 +181,14 @@ export function decodeProjectDir(encoded: string): string | null {
 			const stripped = key.slice(1);
 			const encodedKey = stripped.replace(/\//g, "-");
 			if (encodedKey === rest) {
-				decodeCache.set(encoded, key);
+				decodeCache.set(cacheKey, key);
 				return key;
 			}
 		}
 	}
 
 	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
-	const defaultDecoded = `/${rest.replace(/-/g, "/")}`;
-	decodeCache.set(encoded, defaultDecoded);
-	return defaultDecoded;
+	return `/${rest.replace(/-/g, "/")}`;
 }
 
 /**
