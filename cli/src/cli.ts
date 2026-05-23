@@ -8,6 +8,7 @@ import {
 	divmemoryHome,
 	getAllMappingKeys,
 	getProjectName,
+	localProjectId,
 	lookupProjectMapping,
 	mappingsPath,
 	getProjectId as resolveProjectId,
@@ -26,8 +27,13 @@ Options:
   --dry-run         Print what would be sent without making network requests
   --api-key <key>   API key (overrides DIVMEMORY_API_KEY env var)
   --worker <url>    Worker base URL (overrides DIVMEMORY_WORKER_URL env var)
+  --report-mapping-duplicates
+                    Print path → canonical → would-be local-* IDs from project_mappings.json (no network)
   --help            Show this help message
 `;
+
+/** Mirrors plugin localProjectId for dedup report output. */
+export const computeLocalProjectId = localProjectId;
 
 export type CliOptions = {
 	help?: boolean;
@@ -36,6 +42,7 @@ export type CliOptions = {
 	dryRun?: boolean;
 	apiKey?: string;
 	worker?: string;
+	reportMappingDuplicates?: boolean;
 };
 
 export function parseFlags(args: string[]): CliOptions {
@@ -61,6 +68,8 @@ export function parseFlags(args: string[]): CliOptions {
 		} else if (arg === "--worker") {
 			if (i + 1 >= args.length) throw new Error("Missing value for --worker");
 			result.worker = args[++i];
+		} else if (arg === "--report-mapping-duplicates") {
+			result.reportMappingDuplicates = true;
 		} else if (arg.startsWith("-")) {
 			throw new Error(`Unknown flag: ${arg}`);
 		} else {
@@ -69,6 +78,38 @@ export function parseFlags(args: string[]): CliOptions {
 		i++;
 	}
 	return result;
+}
+
+export function generateMappingReport(home?: string): string[] {
+	const path = mappingsPath(home);
+	try {
+		const raw = readFileSync(path, "utf-8");
+		const mappings: unknown = JSON.parse(raw);
+		if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
+			return ["No project mappings found (invalid format)."];
+		}
+		const entries = Object.entries(mappings).filter(
+			(entry): entry is [string, string] => typeof entry[1] === "string",
+		);
+		if (entries.length === 0) {
+			return ["No project mappings found."];
+		}
+		return entries.map(([absolutePath, canonicalId]) => {
+			let decodedPath = absolutePath;
+			try {
+				decodedPath = decodeURIComponent(absolutePath);
+			} catch {
+				// Fallback to original absolutePath
+			}
+			return `${decodedPath}\t${canonicalId}\t${computeLocalProjectId(decodedPath)}`;
+		});
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ENOENT") {
+			return ["No project mappings found."];
+		}
+		return [`Failed to read project mappings: ${(err as Error).message}`];
+	}
 }
 
 export function expandTilde(input: string): string {
@@ -569,6 +610,13 @@ async function main() {
 
 	if (flags.help) {
 		console.log(HELP_TEXT);
+		process.exit(0);
+	}
+
+	if (flags.reportMappingDuplicates) {
+		for (const line of generateMappingReport()) {
+			console.log(line);
+		}
 		process.exit(0);
 	}
 

@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // SessionFile mirrors the type exported from cli.ts
@@ -2049,6 +2050,119 @@ describe("bootstrap cli", () => {
 			);
 			expect(result.ok).toBe(false);
 			expect(result.error).toBeTruthy();
+		});
+	});
+
+	describe("mapping duplicate report (issue #19)", () => {
+		let mappingsHome: string;
+		let originalHome: string | undefined;
+		let originalApiKey: string | undefined;
+
+		beforeEach(() => {
+			mappingsHome = mkdtempSync(join(tmpdir(), "divmemory-cli-mappings-"));
+			originalHome = process.env.DIVMEMORY_HOME;
+			originalApiKey = process.env.DIVMEMORY_API_KEY;
+			process.env.DIVMEMORY_HOME = mappingsHome;
+			delete process.env.DIVMEMORY_API_KEY;
+		});
+
+		afterEach(() => {
+			if (originalHome === undefined) delete process.env.DIVMEMORY_HOME;
+			else process.env.DIVMEMORY_HOME = originalHome;
+			if (originalApiKey === undefined) delete process.env.DIVMEMORY_API_KEY;
+			else process.env.DIVMEMORY_API_KEY = originalApiKey;
+			try {
+				rmSync(mappingsHome, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		});
+
+		it("parses --report-mapping-duplicates (VAL-CLI-040)", async () => {
+			const mod = await loadCliModule();
+			const { parseFlags } = mod;
+			expect(parseFlags).toBeDefined();
+			const result = parseFlags(["--report-mapping-duplicates"]);
+			expect(result.reportMappingDuplicates).toBe(true);
+		});
+
+		it("reports path, canonical id, and local fallback for seeded mappings (VAL-CLI-041)", async () => {
+			const worktreePath = resolve(mappingsHome, "my-worktree");
+			mkdirSync(worktreePath, { recursive: true });
+			writeFileSync(
+				join(mappingsHome, "project_mappings.json"),
+				JSON.stringify({ [worktreePath]: "github.com/org/my-app" }, null, 2),
+				"utf-8",
+			);
+
+			const mod = await loadCliModule();
+			const { generateMappingReport, computeLocalProjectId } = mod;
+			expect(generateMappingReport).toBeDefined();
+			expect(computeLocalProjectId).toBeDefined();
+
+			const lines = generateMappingReport(mappingsHome);
+			const localId = computeLocalProjectId(worktreePath);
+			expect(lines.some((line) => line.includes(worktreePath))).toBe(true);
+			expect(lines.some((line) => line.includes("github.com/org/my-app"))).toBe(true);
+			expect(lines.some((line) => line.includes(localId))).toBe(true);
+			expect(localId).toMatch(/^local-[a-f0-9]{12}-my-worktree$/);
+		});
+
+		it("decodes URL-encoded absolute path keys in seeded mappings (VAL-CLI-045)", async () => {
+			const decodedPath = resolve(mappingsHome, "my-worktree with spaces");
+			const encodedPath = encodeURIComponent(decodedPath);
+			mkdirSync(decodedPath, { recursive: true });
+			writeFileSync(
+				join(mappingsHome, "project_mappings.json"),
+				JSON.stringify({ [encodedPath]: "github.com/org/my-app-spaces" }, null, 2),
+				"utf-8",
+			);
+
+			const mod = await loadCliModule();
+			const { generateMappingReport, computeLocalProjectId } = mod;
+			expect(generateMappingReport).toBeDefined();
+
+			const lines = generateMappingReport(mappingsHome);
+			const expectedLocalId = computeLocalProjectId(decodedPath);
+			expect(lines.some((line) => line.includes(decodedPath))).toBe(true);
+			expect(lines.some((line) => line.includes(encodedPath))).toBe(false);
+			expect(lines.some((line) => line.includes("github.com/org/my-app-spaces"))).toBe(true);
+			expect(lines.some((line) => line.includes(expectedLocalId))).toBe(true);
+		});
+
+		it("handles missing and empty mappings file gracefully (VAL-CLI-042)", async () => {
+			const mod = await loadCliModule();
+			const { generateMappingReport } = mod;
+			expect(generateMappingReport).toBeDefined();
+
+			const missing = generateMappingReport(mappingsHome);
+			expect(missing.length).toBeGreaterThan(0);
+			expect(missing[0]).toMatch(/no project mappings/i);
+
+			writeFileSync(join(mappingsHome, "project_mappings.json"), "{}\n", "utf-8");
+			const empty = generateMappingReport(mappingsHome);
+			expect(empty.length).toBeGreaterThan(0);
+			expect(empty[0]).toMatch(/no project mappings/i);
+		});
+
+		it("handles invalid JSON in mappings file (VAL-CLI-043)", async () => {
+			writeFileSync(join(mappingsHome, "project_mappings.json"), "not-json", "utf-8");
+			const mod = await loadCliModule();
+			const { generateMappingReport } = mod;
+			const lines = generateMappingReport(mappingsHome);
+			expect(lines[0]).toMatch(/failed to read project mappings/i);
+		});
+
+		it("exits 0 from main without API key when report flag is set (VAL-CLI-044)", async () => {
+			const { spawnSync } = await import("node:child_process");
+			const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
+			const result = spawnSync("bun", [cliPath, "--report-mapping-duplicates"], {
+				env: { ...process.env, DIVMEMORY_HOME: mappingsHome },
+				encoding: "utf-8",
+			});
+			expect(result.status).toBe(0);
+			expect(result.stdout).toMatch(/no project mappings/i);
+			expect(result.stderr).toBe("");
 		});
 	});
 });
