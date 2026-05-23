@@ -27,7 +27,7 @@ describe("normalizeGitRemote", () => {
 
 	it("should preserve ports in SSH URLs with custom ports", () => {
 		expect(normalizeGitRemote("ssh://git@host:2222/org/repo.git")).toBe("host:2222/org/repo");
-		expect(normalizeGitRemote("git@host:2222/org/repo.git")).toBe("host:2222/org/repo");
+		expect(normalizeGitRemote("git@host:2222/org/repo.git")).toBe("host/2222/org/repo");
 	});
 
 	it("should strip userinfo from ssh:// protocol URLs", () => {

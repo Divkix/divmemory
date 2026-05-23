@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { mappingsPath, writeProjectMapping } from "../scripts/project-mappings.mjs";
@@ -1051,6 +1052,45 @@ describe("session-end hook", () => {
 			>;
 			for (let i = 0; i < paths.length; i++) {
 				expect(mappings[paths[i]]).toBe(`github.com/org/repo-${i}`);
+			}
+		});
+
+		it("2.3b writeProjectMapping survives cross-process concurrent writes", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			const modulePath = fileURLToPath(new URL("../scripts/project-mappings.mjs", import.meta.url));
+			const scriptPath = resolve(tmpDir, "helper.mjs");
+			writeFileSync(
+				scriptPath,
+				`import { writeProjectMapping } from "${modulePath.replace(/\\/g, "\\\\")}";\n` +
+					`import { resolve } from "node:path";\n` +
+					`const i = process.argv[2];\n` +
+					`const home = process.env.DIVMEMORY_HOME;\n` +
+					`await writeProjectMapping(resolve(home, \`concurrent-\${i}\`), \`github.com/org/repo-\${i}\`, { home });\n`,
+				"utf-8",
+			);
+			const { spawn } = await import("node:child_process");
+			const children = Array.from(
+				{ length: 6 },
+				(_, i) =>
+					new Promise<void>((resolvePromise, reject) => {
+						const child = spawn("node", [scriptPath, String(i)], {
+							env: { ...process.env, DIVMEMORY_HOME: tmpDir },
+						});
+						child.on("error", reject);
+						child.on("close", (code) => {
+							if (code === 0) resolvePromise();
+							else reject(new Error(`child exited ${code}`));
+						});
+					}),
+			);
+			await Promise.all(children);
+
+			const mappings = JSON.parse(readFileSync(mappingsPath(tmpDir), "utf-8")) as Record<
+				string,
+				string
+			>;
+			for (let i = 0; i < 6; i++) {
+				expect(mappings[resolve(tmpDir, `concurrent-${i}`)]).toBe(`github.com/org/repo-${i}`);
 			}
 		});
 

@@ -1739,6 +1739,11 @@ describe("bootstrap cli", () => {
 			const fromHash = await getProjectId(noGitDir);
 			expect(fromHash).toMatch(/^local-[a-f0-9]{12}-orphan$/);
 			expect(lookupProjectMapping(resolve(noGitDir))).toBeNull();
+
+			const missingDir = join(mappingsHome, "orphan-missing");
+			const fromMissing = await getProjectId(missingDir);
+			expect(fromMissing).toMatch(/^local-[a-f0-9]{12}-orphan-missing$/);
+			expect(lookupProjectMapping(resolve(missingDir))).toBeNull();
 		});
 
 		it("2.5 resolves decoded non-existent path via central mapping", async () => {

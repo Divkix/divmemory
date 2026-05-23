@@ -142,25 +142,26 @@ export function getAllMappingKeys(options = {}) {
 }
 
 export function normalizeGitRemote(url) {
+	const isRealUrl = /^(ssh|https?):\/\//i.test(url);
 	let normalized = url.replace(/\.git$/, "").replace(/\/+$/, "");
 	normalized = normalized.toLowerCase();
 	normalized = normalized.replace(/^[a-z]+:\/\//, "");
-	// Strip userinfo from ssh://user@host/path before checking git@ shorthand
-	if (!normalized.startsWith("git@")) {
-		normalized = normalized.replace(/^[^@]+@/, "");
-	}
-	if (normalized.startsWith("git@")) {
-		const stripped = normalized.replace(/^git@/, "");
-		const colonIndex = stripped.indexOf(":");
+	// Strip userinfo from any [user@]host prefix before path parsing
+	normalized = normalized.replace(/^[^@]+@/, "");
+	if (isRealUrl) {
+		const colonIndex = normalized.indexOf(":");
 		if (colonIndex >= 0) {
-			const host = stripped.slice(0, colonIndex);
-			const rest = stripped.slice(colonIndex + 1);
-			// git@host:port/path → keep colon as separator
-			// git@host:path        → colon separates host from path, replace with /
+			const host = normalized.slice(0, colonIndex);
+			const rest = normalized.slice(colonIndex + 1);
+			// host:port/path → keep colon as separator
 			const portMatch = rest.match(/^(\d+)\/(.+)/);
 			normalized = portMatch ? `${host}:${portMatch[1]}/${portMatch[2]}` : `${host}/${rest}`;
-		} else {
-			normalized = stripped;
+		}
+	} else {
+		// scp-like form: first colon separates host from path, replace with /
+		const colonIndex = normalized.indexOf(":");
+		if (colonIndex >= 0) {
+			normalized = `${normalized.slice(0, colonIndex)}/${normalized.slice(colonIndex + 1)}`;
 		}
 	}
 	return normalized;
@@ -206,6 +207,11 @@ export function localProjectId(absolutePath) {
  */
 export async function resolveProjectId(cwd, options = {}) {
 	const absolutePath = resolve(cwd || process.cwd());
+	if (!existsSync(absolutePath)) {
+		const mapped = lookupProjectMapping(absolutePath, options);
+		if (typeof mapped === "string") return mapped;
+		return localProjectId(absolutePath);
+	}
 	try {
 		const result = await new Promise((resolvePromise, reject) => {
 			const child = spawn("git", ["-C", absolutePath, "remote", "get-url", "origin"], {
@@ -227,10 +233,6 @@ export async function resolveProjectId(cwd, options = {}) {
 		});
 		return normalizeGitRemote(result);
 	} catch {
-		if (!existsSync(absolutePath)) {
-			const mapped = lookupProjectMapping(absolutePath, options);
-			if (typeof mapped === "string") return mapped;
-		}
 		return localProjectId(absolutePath);
 	}
 }
@@ -256,8 +258,7 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
 			mappings = {};
 		}
 
-		const encodedKey = encodePath(absolutePath);
-		if (mappings[absolutePath] === projectId && mappings[encodedKey] === projectId) {
+		if (mappings[absolutePath] === projectId) {
 			return;
 		}
 
