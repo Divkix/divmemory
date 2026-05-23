@@ -71,13 +71,17 @@ async function withMappingFileLock(home, fn) {
 				if (content) {
 					const info = JSON.parse(content);
 					let pidExists = true;
-					try {
-						process.kill(info.pid, 0);
-					} catch (err) {
-						if (err?.code === "ESRCH") {
-							pidExists = false;
+					if (typeof info.pid !== "number" || !Number.isInteger(info.pid) || info.pid <= 0) {
+						pidExists = false;
+					} else {
+						try {
+							process.kill(info.pid, 0);
+						} catch (err) {
+							if (err?.code === "ESRCH") {
+								pidExists = false;
+							}
+							// EPERM means the process exists but we lack permission to signal it
 						}
-						// EPERM means the process exists but we lack permission to signal it
 					}
 					if (!pidExists) {
 						isStale = true;
