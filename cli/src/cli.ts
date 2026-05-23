@@ -269,7 +269,7 @@ export function resolveDecodedPath(segments: string[]): string | null {
 
 		const merged = new Map<string, Candidate>();
 		for (const cand of nextCandidates) {
-			const key = `${cand.lastExistingDir}:${cand.exists}`;
+			const key = `${cand.path}:${cand.exists}`;
 			const existing = merged.get(key);
 			if (!existing || (!existing.exists && cand.exists)) {
 				merged.set(key, cand);

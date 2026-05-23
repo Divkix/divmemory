@@ -700,6 +700,20 @@ describe("bootstrap cli", () => {
 			expect(resolveDecodedPath(segments)).toBe(target);
 			expect(decodeProjectDir(encoded)).toBe(target);
 		});
+
+		it("resolves nested paths with literal dashes that would be collapsed by lastExistingDir (e.g. a-b-c)", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const target = join(tmpDir, "a-b-c");
+			mkdirSync(target, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(target);
+			const segments = segmentsFromEncoded(encoded);
+			expect(resolveDecodedPath(segments)).toBe(resolve(target));
+		});
 	});
 
 	describe("API interaction", () => {
