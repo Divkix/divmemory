@@ -2,7 +2,7 @@ import type { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
-import { memories, projects, sessions } from "../schema";
+import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";
 import { createContextRoute } from "./context";
 
@@ -401,6 +401,155 @@ describe("GET /context", () => {
 			expect(res.status).toBe(200);
 			const body = await res.text();
 			expect(body).toContain("Curated critical fact must survive truncation");
+		});
+	});
+
+	describe("dual-tier context (global + project-specific)", () => {
+		it("B1 — retrieves both global and project-specific memories", async () => {
+			await seedMemories(testDb.db, GLOBAL_PROJECT_ID, [
+				{ topic: "preferences", content: "Global pref: use tabs" },
+			]);
+			await seedMemories(testDb.db, "my-project", [
+				{ topic: "project_context", content: "Project uses React" },
+			]);
+			const req = new Request("http://localhost/context?project=my-project", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body).toContain("Global pref: use tabs");
+			expect(body).toContain("Project uses React");
+		});
+
+		it("B2 — global section appears before project topic sections", async () => {
+			await seedMemories(testDb.db, GLOBAL_PROJECT_ID, [
+				{ topic: "preferences", content: "Global: tabs over spaces" },
+			]);
+			await seedMemories(testDb.db, "my-proj-order", [
+				{ topic: "general", content: "Project fact" },
+			]);
+			const req = new Request("http://localhost/context?project=my-proj-order", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			// The global section header should appear before any project-specific topic header
+			const globalIdx = body.indexOf("Global Preferences");
+			const generalIdx = body.indexOf("General"); // project section
+			expect(globalIdx).toBeGreaterThanOrEqual(0);
+			expect(generalIdx).toBeGreaterThan(globalIdx);
+		});
+
+		it("B3 — override note present in context header", async () => {
+			await seedMemories(testDb.db, GLOBAL_PROJECT_ID, [
+				{ topic: "preferences", content: "Global pref" },
+			]);
+			await seedMemories(testDb.db, "my-proj-override", [
+				{ topic: "general", content: "Project fact" },
+			]);
+			const req = new Request("http://localhost/context?project=my-proj-override", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body.toLowerCase()).toContain("override");
+		});
+
+		it("B4 — 25% budget cap on global memories", async () => {
+			// Seed enough global facts to exceed 25% of 4000 = 1000 chars
+			await seedMemories(testDb.db, GLOBAL_PROJECT_ID, [
+				{ topic: "preferences", content: `Global fact ${"x".repeat(300)}` },
+				{ topic: "preferences", content: `Global fact ${"y".repeat(300)}` },
+				{ topic: "preferences", content: `Global fact ${"z".repeat(300)}` },
+				{ topic: "preferences", content: `Global fact ${"w".repeat(300)}` },
+			]);
+			await seedMemories(testDb.db, "my-proj-cap", [
+				{ topic: "general", content: `Project fact ${"a".repeat(400)}` },
+				{ topic: "general", content: `Project fact ${"b".repeat(400)}` },
+			]);
+			const req = new Request("http://localhost/context?project=my-proj-cap&max_chars=4000", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			// Find the global section bounds
+			const globalSectionStart = body.indexOf("### Global Preferences");
+			const projectContextHeader = body.indexOf("###");
+			const globalSectionEnd =
+				projectContextHeader > globalSectionStart
+					? projectContextHeader
+					: body.indexOf("## ", globalSectionStart + 1);
+			const globalSectionLen =
+				globalSectionStart >= 0
+					? (globalSectionEnd > globalSectionStart ? globalSectionEnd : body.length) -
+						globalSectionStart
+					: 0;
+			expect(globalSectionLen).toBeLessThanOrEqual(1100); // ~1000 + header overhead
+		});
+
+		it("B5 — no global placeholder when no global memories exist", async () => {
+			// Only seed project-specific memories, no global
+			await seedMemories(testDb.db, "my-proj-empty-global", [
+				{ topic: "general", content: "Project only fact" },
+			]);
+			const req = new Request("http://localhost/context?project=my-proj-empty-global", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body).not.toContain("Global Preferences");
+			expect(body).toContain("Project only fact");
+		});
+
+		it("B6 — no global when project has no memories and no global memories", async () => {
+			// Neither project nor global has memories
+			testDb.db
+				.insert(projects)
+				.values({
+					id: "my-proj-no-mem",
+					name: "No Mem",
+					sessionCount: 0,
+					createdAt: new Date().toISOString(),
+					lastSeen: new Date().toISOString(),
+				})
+				.run();
+			const req = new Request("http://localhost/context?project=my-proj-no-mem", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body).not.toContain("Global Preferences");
+			expect(body).toContain("No memories");
+		});
+
+		it("B7 — global memories appear even when project has no own memories", async () => {
+			await seedMemories(testDb.db, GLOBAL_PROJECT_ID, [
+				{ topic: "preferences", content: "Global: only fact" },
+			]);
+			// Project exists but has no memories
+			testDb.db
+				.insert(projects)
+				.values({
+					id: "my-proj-only-global",
+					name: "Only Global",
+					sessionCount: 0,
+					createdAt: new Date().toISOString(),
+					lastSeen: new Date().toISOString(),
+				})
+				.run();
+			const req = new Request("http://localhost/context?project=my-proj-only-global", {
+				headers: authHeaders(),
+			});
+			const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+			expect(res.status).toBe(200);
+			const body = await res.text();
+			expect(body).toContain("Global: only fact");
 		});
 	});
 });

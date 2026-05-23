@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/d1";
 import type { DbLike } from "../lib/db";
 import { runAtomic } from "../lib/db";
 import { jaccardSimilarity } from "../lib/utils";
-import { memories, projects, sessions } from "../schema";
+import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 
 export type { DbLike } from "../lib/db";
 export { jaccardSimilarity, recoverJSON } from "../lib/utils";
@@ -276,37 +276,105 @@ export async function processExtractionAfter(
 			// biome-ignore lint/style/noNonNullAssertion: guarded by isExtractionError check above
 			const filtered = filterFacts(result.extracted!.facts);
 			if (filtered.length > 0) {
-				const { factsToInsert, updates } = await dedupFacts(filtered, projectId, tx);
-				factsWritten = factsToInsert.length + updates.length;
-
-				for (const f of factsToInsert) {
-					addStmt(
-						tx.insert(memories).values({
-							id: crypto.randomUUID(),
-							projectId,
-							sourceSession: sessionId,
-							topic: f.topic,
-							content: f.content,
-							confidence: f.confidence,
-							curated: 0,
-							status: "active",
-							createdAt: now,
-							updatedAt: now,
-						}),
-					);
+				// Separate facts: preferences route to global, others stay local
+				const localFacts: Fact[] = [];
+				const globalFacts: Fact[] = [];
+				for (const f of filtered) {
+					if (f.topic === "preferences") {
+						globalFacts.push(f);
+					} else {
+						localFacts.push(f);
+					}
 				}
 
-				for (const u of updates) {
+				// Handle local facts
+				if (localFacts.length > 0) {
+					const { factsToInsert, updates } = await dedupFacts(localFacts, projectId, tx);
+					factsWritten += factsToInsert.length + updates.length;
+
+					for (const f of factsToInsert) {
+						addStmt(
+							tx.insert(memories).values({
+								id: crypto.randomUUID(),
+								projectId,
+								sourceSession: sessionId,
+								topic: f.topic,
+								content: f.content,
+								confidence: f.confidence,
+								curated: 0,
+								status: "active",
+								createdAt: now,
+								updatedAt: now,
+							}),
+						);
+					}
+
+					for (const u of updates) {
+						addStmt(
+							tx
+								.update(memories)
+								.set({
+									updatedAt: now,
+									...(u.content !== undefined ? { content: u.content } : {}),
+									confidence: u.confidence,
+								})
+								.where(eq(memories.id, u.id)),
+						);
+					}
+				}
+
+				// Handle global (preferences) facts — dedup against global namespace
+				if (globalFacts.length > 0) {
+					// Ensure global project row exists
 					addStmt(
 						tx
-							.update(memories)
-							.set({
-								updatedAt: now,
-								...(u.content !== undefined ? { content: u.content } : {}),
-								confidence: u.confidence,
+							.insert(projects)
+							.values({
+								id: GLOBAL_PROJECT_ID,
+								name: "Global",
+								sessionCount: 0,
+								createdAt: now,
+								lastSeen: now,
 							})
-							.where(eq(memories.id, u.id)),
+							.onConflictDoNothing(),
 					);
+
+					const { factsToInsert: globalToInsert, updates: globalUpdates } = await dedupFacts(
+						globalFacts,
+						GLOBAL_PROJECT_ID,
+						tx,
+					);
+					factsWritten += globalToInsert.length + globalUpdates.length;
+
+					for (const f of globalToInsert) {
+						addStmt(
+							tx.insert(memories).values({
+								id: crypto.randomUUID(),
+								projectId: GLOBAL_PROJECT_ID,
+								sourceSession: sessionId,
+								topic: f.topic,
+								content: f.content,
+								confidence: f.confidence,
+								curated: 0,
+								status: "active",
+								createdAt: now,
+								updatedAt: now,
+							}),
+						);
+					}
+
+					for (const u of globalUpdates) {
+						addStmt(
+							tx
+								.update(memories)
+								.set({
+									updatedAt: now,
+									...(u.content !== undefined ? { content: u.content } : {}),
+									confidence: u.confidence,
+								})
+								.where(eq(memories.id, u.id)),
+						);
+					}
 				}
 			}
 

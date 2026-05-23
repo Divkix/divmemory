@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
 import { csrfValidate } from "../csrf";
-import { memories, projects, sessions } from "../schema";
+import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";
 import {
 	buildSafeConsolidationPrompt,
@@ -594,6 +594,39 @@ describe("runConsolidation — units", () => {
 			// It will return 0 processed because all runs fail.
 			expect(result.projectsProcessed).toBeGreaterThanOrEqual(0);
 		});
+
+		it("skips the global project in cron consolidation", async () => {
+			// Seed normal project with >=2 unconsolidated sessions
+			seedSessions(testDb.sqlite, "cron-skip-global-norm", 3, {
+				rawText: "User: test\nAssistant: ok",
+			});
+			// Seed global project with >=2 unconsolidated sessions
+			seedSessions(testDb.sqlite, GLOBAL_PROJECT_ID, 3, {
+				rawText: "User: global pref\nAssistant: noted",
+			});
+			const { runCronConsolidation } = await import("./consolidate");
+			const result = await runCronConsolidation(
+				testDb.db,
+				{
+					FIREWORKS_API_KEY: "mock-key",
+					FIREWORKS_MODEL: "test-model",
+				},
+				makeMockExtractor(),
+			);
+			// Normal project should be consolidated (extractor succeeds)
+			expect(result.projectsProcessed).toBe(1);
+			// Global project sessions must remain untouched (consolidated=0, rawText preserved)
+			const globalSess = testDb.db
+				.select()
+				.from(sessions)
+				.where(eq(sessions.projectId, GLOBAL_PROJECT_ID))
+				.all() as (typeof sessions.$inferInsert)[];
+			expect(globalSess).toHaveLength(3);
+			for (const s of globalSess) {
+				expect(s.consolidated).toBe(0);
+				expect(s.rawText).not.toBeNull();
+			}
+		});
 	});
 });
 
@@ -732,5 +765,97 @@ describe("database-level concurrency locking", () => {
 
 		expect(result.consolidated).toBe(0);
 		expect(result.error).toBe("Consolidation already in progress");
+	});
+});
+
+describe("consolidation promotion to global", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+
+	const makePromotionExtractor =
+		(facts: Array<{ topic: string; content: string; confidence: number }>) =>
+		async (_prompt: string, _apiKey: string, _model: string) => ({ facts });
+
+	beforeEach(() => {
+		testDb = createTestDb();
+	});
+
+	it("routes preferences facts to GLOBAL_PROJECT_ID during consolidation", async () => {
+		seedSessions(testDb.sqlite, "proj-promo", 2, {
+			rawText: "User: I prefer tabs\nAssistant: noted",
+		});
+
+		const result = await runConsolidation(
+			"proj-promo",
+			testDb.db,
+			{ FIREWORKS_API_KEY: "mock-key", FIREWORKS_MODEL: "test-model" },
+			makePromotionExtractor([
+				{
+					topic: "preferences",
+					content: "Developer prefers tabs over spaces",
+					confidence: 0.9,
+				},
+				{
+					topic: "project_context",
+					content: "Project uses Drizzle ORM",
+					confidence: 0.9,
+				},
+			]),
+		);
+
+		expect(result.error).toBeUndefined();
+
+		// The preferences fact should be stored globally
+		const globalMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, GLOBAL_PROJECT_ID))
+			.all() as (typeof memories.$inferInsert)[];
+		expect(globalMems.length).toBeGreaterThan(0);
+		expect(globalMems[0].content).toBe("Developer prefers tabs over spaces");
+
+		// The project_context fact should stay local
+		const localMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, "proj-promo"))
+			.all() as (typeof memories.$inferInsert)[];
+		expect(localMems.length).toBeGreaterThan(0);
+		expect(localMems[0].content).toBe("Project uses Drizzle ORM");
+	});
+
+	it("non-preferences facts stay local during consolidation", async () => {
+		seedSessions(testDb.sqlite, "proj-no-promo", 2, {
+			rawText: "User: we use React\nAssistant: ok",
+		});
+
+		const result = await runConsolidation(
+			"proj-no-promo",
+			testDb.db,
+			{ FIREWORKS_API_KEY: "mock-key", FIREWORKS_MODEL: "test-model" },
+			makePromotionExtractor([
+				{
+					topic: "project_context",
+					content: "Project uses React",
+					confidence: 0.9,
+				},
+			]),
+		);
+
+		expect(result.error).toBeUndefined();
+
+		const globalMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, GLOBAL_PROJECT_ID))
+			.all();
+		expect(globalMems).toHaveLength(0);
+
+		const localMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, "proj-no-promo"))
+			.all() as (typeof memories.$inferInsert)[];
+		expect(localMems.length).toBeGreaterThan(0);
+		expect(localMems[0].content).toBe("Project uses React");
 	});
 });

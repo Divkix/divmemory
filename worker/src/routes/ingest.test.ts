@@ -1,11 +1,11 @@
 import type { Message, MessageBatch } from "@cloudflare/workers-types";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
 import type { QueueMessage } from "../queue/ingest-consumer";
-import { memories, projects, sessions } from "../schema";
+import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";
 import {
 	createIngestRoute,
@@ -1146,5 +1146,377 @@ describe("Queue-Based Ingest Pipeline (TDD)", () => {
 			// Should resolve successfully without throwing
 			await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
 		});
+	});
+});
+
+describe("global routing (preferences → GLOBAL_PROJECT_ID)", () => {
+	let testDb: ReturnType<typeof createTestDb>;
+	const origFetch = globalThis.fetch;
+
+	const createMockMessage = (body: QueueMessage): Message<QueueMessage> => {
+		let acked = false;
+		let retried = false;
+		return {
+			id: `msg-${Math.random()}`,
+			timestamp: new Date(),
+			body,
+			ack: () => {
+				acked = true;
+			},
+			retry: () => {
+				retried = true;
+			},
+			isAcked: () => acked,
+			isRetried: () => retried,
+		} as unknown as Message<QueueMessage>;
+	};
+
+	const createMockBatch = (messages: Message<QueueMessage>[]): MessageBatch<QueueMessage> => {
+		let retriedAll = false;
+		return {
+			queue: "divmemory-ingest",
+			messages,
+			retryAll: () => {
+				retriedAll = true;
+			},
+			isRetriedAll: () => retriedAll,
+		} as unknown as MessageBatch<QueueMessage>;
+	};
+
+	beforeEach(() => {
+		testDb = createTestDb();
+	});
+
+	afterEach(() => {
+		globalThis.fetch = origFetch;
+	});
+
+	it("C1 — preferences topic routes to global project", async () => {
+		const now = new Date().toISOString();
+		await testDb.db.insert(projects).values({
+			id: "proj/prefs-route",
+			name: "Prefs Route",
+			sessionCount: 1,
+			createdAt: now,
+			lastSeen: now,
+		});
+		await testDb.db.insert(sessions).values({
+			id: "sess-prefs-route",
+			projectId: "proj/prefs-route",
+			source: "droid",
+			rawText: "User: I use tabs",
+			consolidated: 0,
+			createdAt: now,
+		});
+
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					choices: [
+						{
+							message: {
+								content: JSON.stringify({
+									facts: [
+										{
+											topic: "preferences",
+											content: "Developer prefers tabs over spaces",
+											confidence: 0.95,
+										},
+									],
+								}),
+							},
+						},
+					],
+				}),
+				{ status: 200 },
+			);
+
+		const { processIngestQueue } = await import("../queue/ingest-consumer");
+		const msg = createMockMessage({
+			sessionId: "sess-prefs-route",
+			projectId: "proj/prefs-route",
+		});
+		const batch = createMockBatch([msg]);
+		await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+
+		const globalMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, GLOBAL_PROJECT_ID))
+			.all() as (typeof memories.$inferInsert)[];
+		const localMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, "proj/prefs-route"))
+			.all() as (typeof memories.$inferInsert)[];
+
+		expect(globalMems.length).toBeGreaterThan(0);
+		expect(globalMems[0].content).toBe("Developer prefers tabs over spaces");
+		expect(localMems).toHaveLength(0);
+	});
+
+	it("C2 — non-preferences topic stays local", async () => {
+		const now = new Date().toISOString();
+		await testDb.db.insert(projects).values({
+			id: "proj/local-only",
+			name: "Local Only",
+			sessionCount: 1,
+			createdAt: now,
+			lastSeen: now,
+		});
+		await testDb.db.insert(sessions).values({
+			id: "sess-local-only",
+			projectId: "proj/local-only",
+			source: "droid",
+			rawText: "User: we use React",
+			consolidated: 0,
+			createdAt: now,
+		});
+
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					choices: [
+						{
+							message: {
+								content: JSON.stringify({
+									facts: [
+										{
+											topic: "project_context",
+											content: "Project uses React with TypeScript",
+											confidence: 0.9,
+										},
+									],
+								}),
+							},
+						},
+					],
+				}),
+				{ status: 200 },
+			);
+
+		const { processIngestQueue } = await import("../queue/ingest-consumer");
+		const msg = createMockMessage({
+			sessionId: "sess-local-only",
+			projectId: "proj/local-only",
+		});
+		const batch = createMockBatch([msg]);
+		await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+
+		const localMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, "proj/local-only"))
+			.all() as (typeof memories.$inferInsert)[];
+		expect(localMems.length).toBeGreaterThan(0);
+		expect(localMems[0].content).toBe("Project uses React with TypeScript");
+
+		const globalMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.projectId, GLOBAL_PROJECT_ID))
+			.all() as (typeof memories.$inferInsert)[];
+		expect(globalMems).toHaveLength(0);
+	});
+
+	it("C3 — global project auto-created on first global fact", async () => {
+		const now = new Date().toISOString();
+		await testDb.db.insert(projects).values({
+			id: "proj/auto-create",
+			name: "Auto Create",
+			sessionCount: 1,
+			createdAt: now,
+			lastSeen: now,
+		});
+		await testDb.db.insert(sessions).values({
+			id: "sess-auto-create",
+			projectId: "proj/auto-create",
+			source: "droid",
+			rawText: "User: dark mode always",
+			consolidated: 0,
+			createdAt: now,
+		});
+
+		const projBefore = testDb.db
+			.select()
+			.from(projects)
+			.where(eq(projects.id, GLOBAL_PROJECT_ID))
+			.get();
+		expect(projBefore).toBeUndefined();
+
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					choices: [
+						{
+							message: {
+								content: JSON.stringify({
+									facts: [
+										{
+											topic: "preferences",
+											content: "Developer prefers dark mode",
+											confidence: 0.9,
+										},
+									],
+								}),
+							},
+						},
+					],
+				}),
+				{ status: 200 },
+			);
+
+		const { processIngestQueue } = await import("../queue/ingest-consumer");
+		const msg = createMockMessage({
+			sessionId: "sess-auto-create",
+			projectId: "proj/auto-create",
+		});
+		const batch = createMockBatch([msg]);
+		await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+
+		const projAfter = testDb.db
+			.select()
+			.from(projects)
+			.where(eq(projects.id, GLOBAL_PROJECT_ID))
+			.get() as { id: string; name: string | null } | undefined;
+		expect(projAfter).toBeDefined();
+		expect(projAfter?.id).toBe(GLOBAL_PROJECT_ID);
+	});
+
+	it("C4 — dedup against global namespace", async () => {
+		const now = new Date().toISOString();
+		await testDb.db.insert(projects).values({
+			id: "proj/dedup-global",
+			name: "Dedup Global",
+			sessionCount: 1,
+			createdAt: now,
+			lastSeen: now,
+		});
+		await testDb.db.insert(sessions).values({
+			id: "sess-dedup-global",
+			projectId: "proj/dedup-global",
+			source: "droid",
+			rawText: "User: I use vim",
+			consolidated: 0,
+			createdAt: now,
+		});
+
+		await testDb.db
+			.insert(projects)
+			.values({
+				id: GLOBAL_PROJECT_ID,
+				name: "Global",
+				sessionCount: 0,
+				createdAt: now,
+				lastSeen: now,
+			})
+			.onConflictDoNothing();
+
+		await testDb.db.insert(sessions).values({
+			id: "sess-global-seed",
+			projectId: GLOBAL_PROJECT_ID,
+			source: "droid",
+			rawText: "seed",
+			consolidated: 1,
+			createdAt: now,
+		});
+		await testDb.db.insert(memories).values({
+			id: crypto.randomUUID(),
+			projectId: GLOBAL_PROJECT_ID,
+			sourceSession: "sess-global-seed",
+			topic: "preferences",
+			content: "Developer prefers vim keybindings",
+			confidence: 0.9,
+			curated: 0,
+			status: "active",
+			createdAt: now,
+			updatedAt: now,
+		});
+
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					choices: [
+						{
+							message: {
+								content: JSON.stringify({
+									facts: [
+										{
+											topic: "preferences",
+											content: "Developer prefers vim keybindings for editing",
+											confidence: 0.95,
+										},
+									],
+								}),
+							},
+						},
+					],
+				}),
+				{ status: 200 },
+			);
+
+		const { processIngestQueue } = await import("../queue/ingest-consumer");
+		const msg = createMockMessage({
+			sessionId: "sess-dedup-global",
+			projectId: "proj/dedup-global",
+		});
+		const batch = createMockBatch([msg]);
+		await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+
+		const globalMems = testDb.db
+			.select()
+			.from(memories)
+			.where(and(eq(memories.projectId, GLOBAL_PROJECT_ID), eq(memories.status, "active")))
+			.all() as (typeof memories.$inferInsert)[];
+		expect(globalMems).toHaveLength(1);
+		expect(globalMems[0].confidence).toBe(0.95);
+	});
+
+	it("C5 — no extractable facts produces no global or local memories", async () => {
+		const now = new Date().toISOString();
+		await testDb.db.insert(projects).values({
+			id: "proj/no-facts",
+			name: "No Facts",
+			sessionCount: 1,
+			createdAt: now,
+			lastSeen: now,
+		});
+		await testDb.db.insert(sessions).values({
+			id: "sess-no-facts",
+			projectId: "proj/no-facts",
+			source: "droid",
+			rawText: "User: hi",
+			consolidated: 0,
+			createdAt: now,
+		});
+
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					choices: [
+						{
+							message: {
+								content: JSON.stringify({ facts: [] }),
+							},
+						},
+					],
+				}),
+				{ status: 200 },
+			);
+
+		const { processIngestQueue } = await import("../queue/ingest-consumer");
+		const msg = createMockMessage({
+			sessionId: "sess-no-facts",
+			projectId: "proj/no-facts",
+		});
+		const batch = createMockBatch([msg]);
+		await processIngestQueue(batch, { DB: testDb.db, FIREWORKS_API_KEY: "test-api-key" });
+
+		const allMems = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.sourceSession, "sess-no-facts"))
+			.all();
+		expect(allMems).toHaveLength(0);
 	});
 });
