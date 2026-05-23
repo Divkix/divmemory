@@ -6,6 +6,7 @@ import {
 	divmemoryHome,
 	getProjectId,
 	getProjectName,
+	hasGitOrigin,
 	writeProjectMapping,
 } from "../../../plugin/scripts/project-mappings.mjs";
 
@@ -278,7 +279,14 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(payload.cwd || process.cwd());
-	await writeProjectMapping(resolve(payload.cwd || process.cwd()), projectId);
+	const resolvedCwd = resolve(payload.cwd || process.cwd());
+	try {
+		if (await hasGitOrigin(resolvedCwd)) {
+			await writeProjectMapping(resolvedCwd, projectId);
+		}
+	} catch (err) {
+		stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`);
+	}
 
 	const key = apiKey();
 	if (!key) {

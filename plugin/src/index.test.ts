@@ -30,6 +30,12 @@ describe("normalizeGitRemote", () => {
 		expect(normalizeGitRemote("git@host:2222/org/repo.git")).toBe("host:2222/org/repo");
 	});
 
+	it("should strip userinfo from ssh:// protocol URLs", () => {
+		expect(normalizeGitRemote("ssh://deploy@git.example.com/team/repo.git")).toBe(
+			"git.example.com/team/repo",
+		);
+	});
+
 	it("should strip git@ prefix and convert single colon host paths", () => {
 		expect(normalizeGitRemote("git@github.com:my-org/my-repo")).toBe("github.com/my-org/my-repo");
 	});

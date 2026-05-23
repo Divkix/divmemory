@@ -73,8 +73,11 @@ async function withMappingFileLock(home, fn) {
 					let pidExists = true;
 					try {
 						process.kill(info.pid, 0);
-					} catch {
-						pidExists = false;
+					} catch (err) {
+						if (err?.code === "ESRCH") {
+							pidExists = false;
+						}
+						// EPERM means the process exists but we lack permission to signal it
 					}
 					if (!pidExists) {
 						isStale = true;
@@ -138,6 +141,10 @@ export function normalizeGitRemote(url) {
 	let normalized = url.replace(/\.git$/, "").replace(/\/+$/, "");
 	normalized = normalized.toLowerCase();
 	normalized = normalized.replace(/^[a-z]+:\/\//, "");
+	// Strip userinfo from ssh://user@host/path before checking git@ shorthand
+	if (!normalized.startsWith("git@")) {
+		normalized = normalized.replace(/^[^@]+@/, "");
+	}
 	if (normalized.startsWith("git@")) {
 		const stripped = normalized.replace(/^git@/, "");
 		const colonIndex = stripped.indexOf(":");
@@ -153,6 +160,36 @@ export function normalizeGitRemote(url) {
 		}
 	}
 	return normalized;
+}
+
+/**
+ * Check whether the given directory has a git remote named "origin".
+ * Useful for gating mapping persistence to only confirmed git resolutions.
+ */
+export async function hasGitOrigin(cwd) {
+	try {
+		await new Promise((resolvePromise, reject) => {
+			const child = spawn(
+				"git",
+				["-C", resolve(cwd || process.cwd()), "remote", "get-url", "origin"],
+				{
+					stdio: ["ignore", "pipe", "pipe"],
+				},
+			);
+			let stderr = "";
+			child.stderr.on("data", (d) => {
+				stderr += d;
+			});
+			child.on("error", (err) => reject(err));
+			child.on("close", (code) => {
+				if (code === 0) resolvePromise(undefined);
+				else reject(new Error(stderr || `git exited ${code}`));
+			});
+		});
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 export function localProjectId(absolutePath) {
@@ -253,8 +290,11 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
  * Persist absolute path → canonical project id when git remote was resolved.
  * Returns a promise that resolves when the write completes (or fails silently).
  */
+/** Match the exact hashed fallback format: local-<12 hex chars>-<name>. */
+const LOCAL_FALLBACK_RE = /^local-[a-f0-9]{12}-/;
+
 export function writeProjectMapping(absolutePath, projectId, options = {}) {
-	if (projectId.startsWith(LOCAL_PROJECT_PREFIX)) return Promise.resolve();
+	if (LOCAL_FALLBACK_RE.test(projectId)) return Promise.resolve();
 
 	const homeKey = divmemoryHome(options.home);
 	const work = (writeChains.get(homeKey) ?? Promise.resolve()).then(() =>

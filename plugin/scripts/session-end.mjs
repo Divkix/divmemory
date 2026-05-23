@@ -12,6 +12,7 @@ import {
 	divmemoryHome,
 	getProjectId,
 	getProjectName,
+	hasGitOrigin,
 	writeProjectMapping,
 } from "./project-mappings.mjs";
 
@@ -216,7 +217,14 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(cwd || process.cwd());
-	await writeProjectMapping(resolve(cwd || process.cwd()), projectId);
+	const resolvedCwd = resolve(cwd || process.cwd());
+	try {
+		if (await hasGitOrigin(resolvedCwd)) {
+			await writeProjectMapping(resolvedCwd, projectId);
+		}
+	} catch (err) {
+		stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`);
+	}
 
 	let conversation = "";
 	try {

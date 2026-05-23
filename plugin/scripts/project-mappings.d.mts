@@ -8,6 +8,7 @@ export function lookupProjectMapping(
 ): string | null;
 export function getAllMappingKeys(options?: { home?: string }): string[];
 export function normalizeGitRemote(url: string): string;
+export function hasGitOrigin(cwd?: string): Promise<boolean>;
 export function localProjectId(absolutePath: string): string;
 export function resolveProjectId(cwd: string, options?: { home?: string }): Promise<string>;
 export const getProjectId: typeof resolveProjectId;
