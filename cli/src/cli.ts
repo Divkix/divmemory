@@ -137,67 +137,113 @@ export async function findSessionFiles(dir: string, limit = DEFAULT_LIMIT): Prom
 	return files.slice(0, limit);
 }
 
+const decodeCache = new Map<string, string>();
+
 export function decodeProjectDir(encoded: string): string | null {
 	// The encoded format replaces / with - (e.g. /Users/div/projects/my-app -> -Users-div-projects-my-app)
 	if (!encoded.startsWith("-")) return null;
+
+	if (decodeCache.has(encoded)) {
+		return decodeCache.get(encoded) ?? null;
+	}
+
 	const rest = encoded.slice(1);
 	const dashPositions: number[] = [];
 	for (let i = 0; i < rest.length; i++) {
 		if (rest[i] === "-") dashPositions.push(i);
 	}
-	const dashCount = dashPositions.length;
 
-	function getCombinations(indices: number[], choose: number): number[][] {
-		const result: number[][] = [];
-		function helper(start: number, combo: number[]) {
-			if (combo.length === choose) {
-				result.push([...combo]);
-				return;
-			}
-			for (let i = start; i < indices.length; i++) {
-				combo.push(indices[i]);
-				helper(i + 1, combo);
-				combo.pop();
-			}
-		}
-		helper(0, []);
-		return result;
+	// Split rest into segments using dashPositions
+	const segments: string[] = [];
+	let lastPos = 0;
+	for (const pos of dashPositions) {
+		segments.push(rest.slice(lastPos, pos));
+		lastPos = pos + 1;
+	}
+	segments.push(rest.slice(lastPos));
+
+	interface Candidate {
+		path: string;
+		exists: boolean;
+		lastExistingDir: string;
 	}
 
-	// Try all combinations of treating each dash as either "/" or "-".
-	// Start with the assumption that ALL dashes were originally slashes (most common case for paths),
-	// then progressively try fewer replacements, checking which decoded path exists.
-	for (let k = dashCount; k >= 0; k--) {
-		const combos = getCombinations(dashPositions, k);
-		for (const combo of combos) {
-			const chars = rest.split("");
-			for (const pos of combo) {
-				chars[pos] = "/";
+	const firstPath = `/${segments[0]}`;
+	let firstExists = false;
+	try {
+		firstExists = statSync(firstPath).isDirectory();
+	} catch {}
+
+	let candidates: Candidate[] = [
+		{
+			path: firstPath,
+			exists: firstExists,
+			lastExistingDir: firstExists ? firstPath : "/",
+		},
+	];
+
+	for (let i = 1; i < segments.length; i++) {
+		const nextSegment = segments[i];
+		const nextCandidates: Candidate[] = [];
+
+		for (const cand of candidates) {
+			// Option A: Join with "/" (only if parent/cand itself is a verified existing directory)
+			if (cand.exists) {
+				const slashPath = `${cand.path}/${nextSegment}`;
+				let slashExists = false;
+				try {
+					slashExists = statSync(slashPath).isDirectory();
+				} catch {}
+
+				nextCandidates.push({
+					path: slashPath,
+					exists: slashExists,
+					lastExistingDir: slashExists ? slashPath : cand.path,
+				});
 			}
-			const attempt = `/${chars.join("")}`;
+
+			// Option B: Join with "-" (parent is cand.lastExistingDir, which is verified to exist)
+			const dashPath = `${cand.path}-${nextSegment}`;
+			let dashExists = false;
 			try {
-				if (statSync(attempt).isDirectory()) return attempt;
-			} catch {
-				// ignore
-			}
+				dashExists = statSync(dashPath).isDirectory();
+			} catch {}
+
+			nextCandidates.push({
+				path: dashPath,
+				exists: dashExists,
+				lastExistingDir: dashExists ? dashPath : cand.lastExistingDir,
+			});
+		}
+
+		candidates = nextCandidates;
+	}
+
+	// Check if any candidate of the full path exists as a directory
+	for (const cand of candidates) {
+		if (cand.exists) {
+			decodeCache.set(encoded, cand.path);
+			return cand.path;
 		}
 	}
 
-	// Consult central mapping for candidates with literal dashes (k < dashCount)
+	// Consult central mapping for candidates with literal dashes
 	const keys = getAllMappingKeys();
 	for (const key of keys) {
 		if (key.startsWith("/")) {
 			const stripped = key.slice(1);
 			const encodedKey = stripped.replace(/\//g, "-");
 			if (encodedKey === rest) {
+				decodeCache.set(encoded, key);
 				return key;
 			}
 		}
 	}
 
 	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
-	// (the caller will fall back to basename if git remote doesn't work).
-	return `/${rest.replace(/-/g, "/")}`;
+	const defaultDecoded = `/${rest.replace(/-/g, "/")}`;
+	decodeCache.set(encoded, defaultDecoded);
+	return defaultDecoded;
 }
 
 export function extractConversation(jsonlContent: string): string {
