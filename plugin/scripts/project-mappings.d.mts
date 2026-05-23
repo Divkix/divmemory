@@ -1,6 +1,7 @@
 export function divmemoryHome(home?: string): string;
 export function getProjectName(projectId: string): string;
 export function mappingsPath(home?: string): string;
+export function encodePath(absolutePath: string): string;
 export function lookupProjectMapping(
 	absolutePath: string,
 	options?: { home?: string },
@@ -15,4 +16,3 @@ export function writeProjectMapping(
 	projectId: string,
 	options?: { home?: string },
 ): Promise<void>;
-export function pendingMappingWrites(home?: string): Promise<void>;

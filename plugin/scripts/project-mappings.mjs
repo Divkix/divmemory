@@ -27,6 +27,10 @@ export function mappingsPath(home) {
 	return join(divmemoryHome(home), MAPPINGS_FILE_NAME);
 }
 
+export function encodePath(absolutePath) {
+	return `-${absolutePath.slice(1).replace(/\//g, "-")}`;
+}
+
 function mappingLockPath(home) {
 	return join(divmemoryHome(home), LOCK_FILE_NAME);
 }
@@ -108,7 +112,7 @@ export function lookupProjectMapping(absolutePath, options = {}) {
 		}
 		let mapped = mappings[absolutePath];
 		if (typeof mapped !== "string" && absolutePath.startsWith("/")) {
-			const encodedKey = `-${absolutePath.slice(1).replace(/\//g, "-")}`;
+			const encodedKey = encodePath(absolutePath);
 			mapped = mappings[encodedKey];
 		}
 		return typeof mapped === "string" ? mapped : null;
@@ -138,12 +142,12 @@ export function normalizeGitRemote(url) {
 		const stripped = normalized.replace(/^git@/, "");
 		const colonIndex = stripped.indexOf(":");
 		if (colonIndex >= 0) {
-			const afterColon = stripped.slice(colonIndex + 1);
-			if (/^\d+\//.test(afterColon)) {
-				normalized = stripped;
-			} else {
-				normalized = `${stripped.slice(0, colonIndex)}/${afterColon}`;
-			}
+			const host = stripped.slice(0, colonIndex);
+			const rest = stripped.slice(colonIndex + 1);
+			// git@host:port/path → keep colon as separator
+			// git@host:path        → colon separates host from path, replace with /
+			const portMatch = rest.match(/^(\d+)\/(.+)/);
+			normalized = portMatch ? `${host}:${portMatch[1]}/${portMatch[2]}` : `${host}/${rest}`;
 		} else {
 			normalized = stripped;
 		}
@@ -194,22 +198,15 @@ export async function resolveProjectId(cwd, options = {}) {
 		}
 
 		if (absolutePath.startsWith("/")) {
-			const encoded = `-${absolutePath.slice(1).replace(/\//g, "-")}`;
-			const rest = encoded.slice(1);
-			for (const [key, value] of Object.entries(mappings)) {
-				if (typeof value !== "string") continue;
-				if (key.startsWith("/")) {
-					const stripped = key.slice(1);
-					const encodedKey = stripped.replace(/\//g, "-");
-					if (encodedKey === rest) return value;
-				} else if (key === encoded) {
-					return value;
-				}
-			}
+			const direct = mappings[absolutePath];
+			if (typeof direct === "string") return direct;
+			const byEncoded = mappings[encodePath(absolutePath)];
+			if (typeof byEncoded === "string") return byEncoded;
+		} else {
+			const direct = mappings[absolutePath];
+			if (typeof direct === "string") return direct;
 		}
 
-		const direct = mappings[absolutePath];
-		if (typeof direct === "string") return direct;
 		return localProjectId(absolutePath);
 	}
 }
@@ -219,11 +216,6 @@ export const getProjectId = resolveProjectId;
 
 /** Serializes mapping writes within this process (session-end concurrency). */
 const writeChains = new Map();
-
-/** Await in-flight mapping writes (tests and cross-area specs). */
-export function pendingMappingWrites(home) {
-	return writeChains.get(divmemoryHome(home)) ?? Promise.resolve();
-}
 
 async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}) {
 	const homeKey = divmemoryHome(options.home);
@@ -240,7 +232,7 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
 			mappings = {};
 		}
 
-		const encodedKey = `-${absolutePath.slice(1).replace(/\//g, "-")}`;
+		const encodedKey = encodePath(absolutePath);
 		if (mappings[absolutePath] === projectId || mappings[encodedKey] === projectId) {
 			return;
 		}
@@ -259,7 +251,7 @@ async function writeProjectMappingUnlocked(absolutePath, projectId, options = {}
 
 /**
  * Persist absolute path → canonical project id when git remote was resolved.
- * Best-effort: schedules write on the in-process chain; errors are swallowed.
+ * Returns a promise that resolves when the write completes (or fails silently).
  */
 export function writeProjectMapping(absolutePath, projectId, options = {}) {
 	if (projectId.startsWith(LOCAL_PROJECT_PREFIX)) return Promise.resolve();
@@ -268,6 +260,7 @@ export function writeProjectMapping(absolutePath, projectId, options = {}) {
 	const work = (writeChains.get(homeKey) ?? Promise.resolve()).then(() =>
 		writeProjectMappingUnlocked(absolutePath, projectId, options),
 	);
+	// Best-effort: chain writes but don't expose errors to callers
 	const settled = work.catch(() => {});
 	writeChains.set(homeKey, settled);
 	return settled;

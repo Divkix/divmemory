@@ -15,15 +15,7 @@ import {
 	writeProjectMapping,
 } from "./project-mappings.mjs";
 
-export {
-	divmemoryHome,
-	getProjectId,
-	getProjectName,
-	lookupProjectMapping,
-	mappingsPath,
-	resolveProjectId,
-	writeProjectMapping,
-} from "./project-mappings.mjs";
+export { getProjectId } from "./project-mappings.mjs";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 

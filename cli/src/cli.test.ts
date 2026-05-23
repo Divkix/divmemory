@@ -1820,7 +1820,8 @@ describe("bootstrap cli", () => {
 
 			// The encoded key for testDir (e.g. /tmp/divmemory-cli-xxxx/vinext-earnest)
 			// should be -tmp-divmemory-cli-xxxx-vinext-earnest
-			const encoded = `-${testDir.slice(1).replace(/\//g, "-")}`;
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(testDir);
 
 			const decoded = decodeProjectDir(encoded);
 			expect(decoded).toBe(testDir);

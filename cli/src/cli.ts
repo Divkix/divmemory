@@ -162,6 +162,46 @@ export function decodeProjectDir(encoded: string): string | null {
 	}
 	segments.push(rest.slice(lastPos));
 
+	// Try to resolve by checking filesystem (handles paths with literal dashes)
+	const resolved = resolveDecodedPath(segments);
+	if (resolved) {
+		decodeCache.set(encoded, resolved);
+		return resolved;
+	}
+
+	// Consult central mapping for deleted worktrees with literal dashes
+	const keys = getAllMappingKeys();
+	for (const key of keys) {
+		if (key.startsWith("/")) {
+			const stripped = key.slice(1);
+			const encodedKey = stripped.replace(/\//g, "-");
+			if (encodedKey === rest) {
+				decodeCache.set(encoded, key);
+				return key;
+			}
+		}
+	}
+
+	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
+	const defaultDecoded = `/${rest.replace(/-/g, "/")}`;
+	decodeCache.set(encoded, defaultDecoded);
+	return defaultDecoded;
+}
+
+/**
+ * The encoding scheme replaces "/" with "-" (e.g. /Users/div/projects/my-app -> -Users-div-projects-my-app).
+ * This is lossy when paths contain literal dashes — the decoder can't distinguish
+ * which "-" was a "/" vs a literal "-" character.
+ *
+ * This BFS walk resolves the ambiguity by checking each candidate path against
+ * the filesystem at every depth level, pruning branches that don't exist on disk.
+ * For each segment it tries two interpretations:
+ *   A) join with "/" — the segment was part of a deeper directory (only if parent exists)
+ *   B) join with "-" — the dash is literal, segment is a flat path component
+ *
+ * Returns the first fully-existing path found, or null if none exist.
+ */
+function resolveDecodedPath(segments: string[]): string | null {
 	interface Candidate {
 		path: string;
 		exists: boolean;
@@ -222,28 +262,11 @@ export function decodeProjectDir(encoded: string): string | null {
 	// Check if any candidate of the full path exists as a directory
 	for (const cand of candidates) {
 		if (cand.exists) {
-			decodeCache.set(encoded, cand.path);
 			return cand.path;
 		}
 	}
 
-	// Consult central mapping for candidates with literal dashes
-	const keys = getAllMappingKeys();
-	for (const key of keys) {
-		if (key.startsWith("/")) {
-			const stripped = key.slice(1);
-			const encodedKey = stripped.replace(/\//g, "-");
-			if (encodedKey === rest) {
-				decodeCache.set(encoded, key);
-				return key;
-			}
-		}
-	}
-
-	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
-	const defaultDecoded = `/${rest.replace(/-/g, "/")}`;
-	decodeCache.set(encoded, defaultDecoded);
-	return defaultDecoded;
+	return null;
 }
 
 export function extractConversation(jsonlContent: string): string {

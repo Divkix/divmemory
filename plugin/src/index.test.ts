@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { normalizeGitRemote } from "../scripts/project-mappings.mjs";
+import { encodePath, normalizeGitRemote } from "../scripts/project-mappings.mjs";
+
+describe("encodePath", () => {
+	it("should encode an absolute path to the dash-prefixed format", () => {
+		expect(encodePath("/Users/div/projects/my-app")).toBe("-Users-div-projects-my-app");
+	});
+
+	it("should handle paths with literal dashes correctly", () => {
+		expect(encodePath("/Users/div/worktrees/vinext-earnest")).toBe(
+			"-Users-div-worktrees-vinext-earnest",
+		);
+	});
+
+	it("should handle root-level paths", () => {
+		expect(encodePath("/home/user")).toBe("-home-user");
+	});
+});
 
 describe("normalizeGitRemote", () => {
 	it("should correctly normalize standard Git URLs", () => {
