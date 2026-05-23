@@ -16,6 +16,23 @@ async function loadCliModule() {
 	return import("./cli");
 }
 
+/** Mirrors segment splitting in decodeProjectDir for BFS tests. */
+function segmentsFromEncoded(encoded: string): string[] {
+	const rest = encoded.slice(1);
+	const dashPositions: number[] = [];
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "-") dashPositions.push(i);
+	}
+	const segments: string[] = [];
+	let lastPos = 0;
+	for (const pos of dashPositions) {
+		segments.push(rest.slice(lastPos, pos));
+		lastPos = pos + 1;
+	}
+	segments.push(rest.slice(lastPos));
+	return segments;
+}
+
 describe("bootstrap cli", () => {
 	let tmpDir: string;
 
@@ -607,6 +624,81 @@ describe("bootstrap cli", () => {
 			const decoded = decodeProjectDir(encoded);
 			expect(decoded).toContain("Users");
 			expect(decoded).toContain("myapp");
+		});
+	});
+
+	describe("resolveDecodedPath BFS disambiguation", () => {
+		it("resolves deeply nested paths with literal dashes in middle segments", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const target = join(tmpDir, "foo-bar", "nested", "leaf");
+			mkdirSync(target, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const segments = segmentsFromEncoded(encodePath(target));
+			expect(resolveDecodedPath(segments)).toBe(resolve(target));
+		});
+
+		it("prefers slash-expanded path when multiple terminal candidates exist", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			mkdirSync(join(tmpDir, "a", "b"), { recursive: true });
+			mkdirSync(join(tmpDir, "a-b"), { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const ambiguousTarget = join(tmpDir, "a-b");
+			const segments = segmentsFromEncoded(encodePath(ambiguousTarget));
+			// BFS pushes slash joins before dash joins; /.../a/b is listed before /.../a-b
+			expect(resolveDecodedPath(segments)).toBe(resolve(join(tmpDir, "a", "b")));
+		});
+
+		it("resolves a single-segment path to the existing directory", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const segments = segmentsFromEncoded(encodePath(tmpDir));
+			expect(resolveDecodedPath(segments)).toBe(resolve(tmpDir));
+		});
+
+		it("resolves root-equivalent single empty segment to /", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			expect(resolveDecodedPath([""])).toBe("/");
+		});
+
+		it("returns null when no matching directory exists on disk", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const missing = join(tmpDir, "does-not-exist");
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const segments = segmentsFromEncoded(encodePath(missing));
+			expect(resolveDecodedPath(segments)).toBeNull();
+		});
+
+		it("matches decodeProjectDir for a literal-dash fixture", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath, decodeProjectDir } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+			expect(decodeProjectDir).toBeDefined();
+
+			const target = join(tmpDir, "proj-with-dash");
+			mkdirSync(target, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(target);
+			const segments = segmentsFromEncoded(encoded);
+			expect(resolveDecodedPath(segments)).toBe(target);
+			expect(decodeProjectDir(encoded)).toBe(target);
 		});
 	});
 

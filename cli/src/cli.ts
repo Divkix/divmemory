@@ -204,7 +204,7 @@ export function decodeProjectDir(encoded: string): string | null {
  *
  * Returns the first fully-existing path found, or null if none exist.
  */
-function resolveDecodedPath(segments: string[]): string | null {
+export function resolveDecodedPath(segments: string[]): string | null {
 	interface Candidate {
 		path: string;
 		exists: boolean;
