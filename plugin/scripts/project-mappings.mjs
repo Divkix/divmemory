@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -223,25 +223,27 @@ export async function resolveProjectId(cwd, options = {}) {
 		});
 		return normalizeGitRemote(result);
 	} catch {
-		let mappings = {};
-		try {
-			const raw = readFileSync(mappingsPath(options.home), "utf-8");
-			mappings = JSON.parse(raw);
-			if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
+		if (!existsSync(absolutePath)) {
+			let mappings = {};
+			try {
+				const raw = readFileSync(mappingsPath(options.home), "utf-8");
+				mappings = JSON.parse(raw);
+				if (typeof mappings !== "object" || mappings === null || Array.isArray(mappings)) {
+					mappings = {};
+				}
+			} catch {
 				mappings = {};
 			}
-		} catch {
-			mappings = {};
-		}
 
-		if (absolutePath.startsWith("/")) {
-			const direct = mappings[absolutePath];
-			if (typeof direct === "string") return direct;
-			const byEncoded = mappings[encodePath(absolutePath)];
-			if (typeof byEncoded === "string") return byEncoded;
-		} else {
-			const direct = mappings[absolutePath];
-			if (typeof direct === "string") return direct;
+			if (absolutePath.startsWith("/")) {
+				const direct = mappings[absolutePath];
+				if (typeof direct === "string") return direct;
+				const byEncoded = mappings[encodePath(absolutePath)];
+				if (typeof byEncoded === "string") return byEncoded;
+			} else {
+				const direct = mappings[absolutePath];
+				if (typeof direct === "string") return direct;
+			}
 		}
 
 		return localProjectId(absolutePath);

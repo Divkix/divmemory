@@ -1809,6 +1809,30 @@ describe("bootstrap cli", () => {
 			expect(projectId).toBe(canonicalId);
 		});
 
+		it("2.6.b ignores stale central mapping when directory exists but git has no remote", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, lookupProjectMapping, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(lookupProjectMapping).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const staleDir = resolve(mappingsHome, "stale-case");
+			mkdirSync(staleDir);
+			const { execSync } = await import("node:child_process");
+			execSync("git init", { cwd: staleDir });
+			// Intentionally do NOT add a remote, so git lookup fails
+
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [resolve(staleDir)]: "github.com/stale/wrong" }),
+				"utf-8",
+			);
+
+			const projectId = await getProjectId(staleDir);
+			expect(projectId).toMatch(/^local-[a-f0-9]{12}-stale-case$/);
+			expect(lookupProjectMapping(resolve(staleDir))).toBe("github.com/stale/wrong");
+		});
+
 		it("2.7 decodeProjectDir correctly decodes directories with literal dashes inside them by checking disk", async () => {
 			const mod = await loadCliModule();
 			const { decodeProjectDir } = mod;

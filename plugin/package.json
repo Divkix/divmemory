@@ -6,6 +6,10 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
 		"./project-mappings": {
 			"types": "./scripts/project-mappings.d.mts",
 			"default": "./scripts/project-mappings.mjs"

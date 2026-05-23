@@ -8,7 +8,7 @@ import {
 	getProjectName,
 	hasGitOrigin,
 	writeProjectMapping,
-} from "../../../plugin/scripts/project-mappings.mjs";
+} from "../scripts/project-mappings.mjs";
 
 export { getProjectId };
 

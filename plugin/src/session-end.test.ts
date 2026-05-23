@@ -1022,11 +1022,11 @@ describe("session-end hook", () => {
 			}
 		});
 
-		it("getProjectId uses central mapping when git is unavailable", async () => {
+		it("getProjectId uses central mapping when git is unavailable and path is missing", async () => {
 			process.env.DIVMEMORY_HOME = tmpDir;
 			const worktreePath = resolve(tmpDir, "mapped-only");
-			const { mkdirSync, writeFileSync: writeFs } = await import("node:fs");
-			mkdirSync(worktreePath, { recursive: true });
+			// Do NOT create the directory so the mapping fallback is used
+			const { writeFileSync: writeFs } = await import("node:fs");
 			writeFs(
 				join(tmpDir, "project_mappings.json"),
 				JSON.stringify({ [worktreePath]: "github.com/org/mapped-repo" }),

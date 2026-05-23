@@ -202,11 +202,10 @@ describe("session-start hook", () => {
 			expect(id).toContain("github.com");
 		});
 
-		it("uses central mapping when git is unavailable", async () => {
+		it("uses central mapping when git is unavailable and path is missing", async () => {
 			process.env.DIVMEMORY_HOME = tmpDir;
 			const worktreePath = resolve(tmpDir, "mapped-start");
-			const { mkdirSync } = await import("node:fs");
-			mkdirSync(worktreePath, { recursive: true });
+			// Do NOT create the directory so the mapping fallback is used
 			writeFileSync(
 				join(tmpDir, "project_mappings.json"),
 				JSON.stringify({ [worktreePath]: "github.com/org/mapped-start" }),
