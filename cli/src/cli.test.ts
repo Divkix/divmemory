@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // SessionFile mirrors the type exported from cli.ts
@@ -14,6 +14,23 @@ type SessionFile = {
 // We'll import them once they exist
 async function loadCliModule() {
 	return import("./cli");
+}
+
+/** Mirrors segment splitting in decodeProjectDir for BFS tests. */
+function segmentsFromEncoded(encoded: string): string[] {
+	const rest = encoded.slice(1);
+	const dashPositions: number[] = [];
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "-") dashPositions.push(i);
+	}
+	const segments: string[] = [];
+	let lastPos = 0;
+	for (const pos of dashPositions) {
+		segments.push(rest.slice(lastPos, pos));
+		lastPos = pos + 1;
+	}
+	segments.push(rest.slice(lastPos));
+	return segments;
 }
 
 describe("bootstrap cli", () => {
@@ -607,6 +624,95 @@ describe("bootstrap cli", () => {
 			const decoded = decodeProjectDir(encoded);
 			expect(decoded).toContain("Users");
 			expect(decoded).toContain("myapp");
+		});
+	});
+
+	describe("resolveDecodedPath BFS disambiguation", () => {
+		it("resolves deeply nested paths with literal dashes in middle segments", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const target = join(tmpDir, "foo-bar", "nested", "leaf");
+			mkdirSync(target, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const segments = segmentsFromEncoded(encodePath(target));
+			expect(resolveDecodedPath(segments)).toBe(resolve(target));
+		});
+
+		it("prefers slash-expanded path when multiple terminal candidates exist", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			mkdirSync(join(tmpDir, "a", "b"), { recursive: true });
+			mkdirSync(join(tmpDir, "a-b"), { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const ambiguousTarget = join(tmpDir, "a-b");
+			const segments = segmentsFromEncoded(encodePath(ambiguousTarget));
+			// BFS pushes slash joins before dash joins; /.../a/b is listed before /.../a-b
+			expect(resolveDecodedPath(segments)).toBe(resolve(join(tmpDir, "a", "b")));
+		});
+
+		it("resolves a single-segment path to the existing directory", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const segments = segmentsFromEncoded(encodePath(tmpDir));
+			expect(resolveDecodedPath(segments)).toBe(resolve(tmpDir));
+		});
+
+		it("resolves root-equivalent single empty segment to /", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			expect(resolveDecodedPath([""])).toBe("/");
+		});
+
+		it("returns null when no matching directory exists on disk", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const missing = join(tmpDir, "does-not-exist");
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const segments = segmentsFromEncoded(encodePath(missing));
+			expect(resolveDecodedPath(segments)).toBeNull();
+		});
+
+		it("matches decodeProjectDir for a literal-dash fixture", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath, decodeProjectDir } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+			expect(decodeProjectDir).toBeDefined();
+
+			const target = join(tmpDir, "proj-with-dash");
+			mkdirSync(target, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(target);
+			const segments = segmentsFromEncoded(encoded);
+			expect(resolveDecodedPath(segments)).toBe(target);
+			expect(decodeProjectDir(encoded)).toBe(target);
+		});
+
+		it("resolves nested paths with literal dashes that would be collapsed by lastExistingDir (e.g. a-b-c)", async () => {
+			const mod = await loadCliModule();
+			const { resolveDecodedPath } = mod;
+			expect(resolveDecodedPath).toBeDefined();
+
+			const target = join(tmpDir, "a-b-c");
+			mkdirSync(target, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(target);
+			const segments = segmentsFromEncoded(encoded);
+			expect(resolveDecodedPath(segments)).toBe(resolve(target));
 		});
 	});
 
@@ -1682,6 +1788,252 @@ describe("bootstrap cli", () => {
 			});
 			const progress = outputs.find((o) => o.includes("[1/1]"));
 			expect(progress).toBeTruthy();
+		});
+	});
+
+	describe("project path mappings (issue #13)", () => {
+		let mappingsHome: string;
+		const oldDivmemoryHome = process.env.DIVMEMORY_HOME;
+
+		beforeEach(() => {
+			mappingsHome = mkdtempSync(join(tmpdir(), "divmemory-mappings-"));
+			process.env.DIVMEMORY_HOME = mappingsHome;
+		});
+
+		afterEach(() => {
+			if (oldDivmemoryHome === undefined) delete process.env.DIVMEMORY_HOME;
+			else process.env.DIVMEMORY_HOME = oldDivmemoryHome;
+			try {
+				rmSync(mappingsHome, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		});
+
+		it("VAL-CROSS-013: session-end writes mapping, CLI resolves deleted worktree path", async () => {
+			const { processSessionEnd } = await import("../../plugin/scripts/session-end.mjs");
+			const { getProjectId } = await loadCliModule();
+			const tmpHome = mkdtempSync(join(tmpdir(), "cross-013-home-"));
+			const gitDir = join(tmpHome, "worktree");
+			const oldHome = process.env.DIVMEMORY_HOME;
+			const oldKey = process.env.DIVMEMORY_API_KEY;
+
+			try {
+				process.env.DIVMEMORY_HOME = tmpHome;
+				process.env.DIVMEMORY_API_KEY = "test-key";
+				mkdirSync(gitDir, { recursive: true });
+				const { execSync } = await import("node:child_process");
+				execSync("git init", { cwd: gitDir });
+				execSync("git remote add origin https://github.com/cloudflare/vinext.git", { cwd: gitDir });
+				const transcript = join(gitDir, "sess.jsonl");
+				writeFileSync(
+					transcript,
+					`${JSON.stringify({ role: "user", content: [{ type: "text", text: "hi" }] })}\n`,
+				);
+
+				await processSessionEnd(
+					JSON.stringify({
+						session_id: "cross-013",
+						cwd: gitDir,
+						transcript_path: transcript,
+						hook_event_name: "SessionEnd",
+					}),
+					{
+						fetch: async () =>
+							new Response(JSON.stringify({ ok: true, facts_written: 1 }), { status: 200 }),
+						stderr: () => {},
+						stdout: () => {},
+					},
+				);
+
+				const absolutePath = resolve(gitDir);
+				rmSync(gitDir, { recursive: true, force: true });
+
+				const projectId = await getProjectId(absolutePath);
+				expect(projectId).toBe("github.com/cloudflare/vinext");
+			} finally {
+				if (oldHome === undefined) delete process.env.DIVMEMORY_HOME;
+				else process.env.DIVMEMORY_HOME = oldHome;
+				if (oldKey === undefined) delete process.env.DIVMEMORY_API_KEY;
+				else process.env.DIVMEMORY_API_KEY = oldKey;
+				rmSync(tmpHome, { recursive: true, force: true });
+			}
+		});
+
+		it("2.4 uses git remote first, then central mapping, then local hash", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, lookupProjectMapping, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(lookupProjectMapping).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const deletedPath = resolve(mappingsHome, "deleted-worktree");
+			const canonicalId = "github.com/cloudflare/vinext";
+			const mapping = { [deletedPath]: canonicalId };
+			const payload = JSON.stringify(mapping);
+			writeFileSync(getMappingsFilePath(), payload, "utf-8");
+			const fromMapping = await getProjectId(deletedPath);
+			expect(fromMapping).toBe(canonicalId);
+
+			const gitDir = join(mappingsHome, "live-repo");
+			mkdirSync(gitDir);
+			const { execSync } = await import("node:child_process");
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/live-repo.git", {
+				cwd: gitDir,
+			});
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [resolve(gitDir)]: "github.com/stale/wrong" }),
+				"utf-8",
+			);
+			const fromGit = await getProjectId(gitDir);
+			expect(fromGit).toBe("github.com/divkix/live-repo");
+
+			const noGitDir = join(mappingsHome, "orphan");
+			mkdirSync(noGitDir);
+			const fromHash = await getProjectId(noGitDir);
+			expect(fromHash).toMatch(/^local-[a-f0-9]{12}-orphan$/);
+			expect(lookupProjectMapping(resolve(noGitDir))).toBeNull();
+
+			const missingDir = join(mappingsHome, "orphan-missing");
+			const fromMissing = await getProjectId(missingDir);
+			expect(fromMissing).toMatch(/^local-[a-f0-9]{12}-orphan-missing$/);
+			expect(lookupProjectMapping(resolve(missingDir))).toBeNull();
+		});
+
+		it("2.5 resolves decoded non-existent path via central mapping", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, decodeProjectDir, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(decodeProjectDir).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const absolutePath = "/Users/div/worktrees/vinext-earnest";
+			const encoded = "-Users-div-worktrees-vinext-earnest";
+			// Write the mapping using the absolute path key (real production format)
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [absolutePath]: "github.com/cloudflare/vinext" }),
+				"utf-8",
+			);
+
+			const decoded = decodeProjectDir(encoded);
+			expect(decoded).toBe(absolutePath);
+
+			const projectId = await getProjectId(decoded as string);
+			expect(projectId).toBe("github.com/cloudflare/vinext");
+		});
+
+		it("2.5.b resolves legacy relative mapped keys correctly by falling through to absolute resolution", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, decodeProjectDir, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(decodeProjectDir).toBeDefined();
+
+			const legacyKey = "-Users-me-my-app";
+			const absolutePath = "/Users/me/my/app";
+			// Write a legacy mapping where the key is the raw encoded string (e.g. "-Users-me-my-app")
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [legacyKey]: "github.com/me/my-app" }),
+				"utf-8",
+			);
+
+			// decodeProjectDir should now fall through to return the absolute-path version "/Users/me/my/app"
+			const decoded = decodeProjectDir(legacyKey);
+			expect(decoded).toBe(absolutePath);
+
+			// getProjectId resolves it correctly as "github.com/me/my-app" by checking absolutePath.startsWith("/")
+			// and mapping key === encoded inside resolveProjectId
+			const projectId = await getProjectId(decoded as string);
+			expect(projectId).toBe("github.com/me/my-app");
+		});
+
+		it("2.6 verifies writeProjectMapping/lookupProjectMapping for absolute-path keys", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, lookupProjectMapping } = mod;
+			const { writeProjectMapping } = await import("@divmemory/plugin/project-mappings");
+			expect(getProjectId).toBeDefined();
+			expect(lookupProjectMapping).toBeDefined();
+			expect(writeProjectMapping).toBeDefined();
+
+			const absolutePath = "/Users/div/worktrees/vinext-earnest";
+			const canonicalId = "github.com/cloudflare/vinext";
+
+			await writeProjectMapping(absolutePath, canonicalId);
+
+			const resolved = lookupProjectMapping(absolutePath);
+			expect(resolved).toBe(canonicalId);
+
+			const projectId = await getProjectId(absolutePath);
+			expect(projectId).toBe(canonicalId);
+		});
+
+		it("2.6.b ignores stale central mapping when directory exists but git has no remote", async () => {
+			const mod = await loadCliModule();
+			const { getProjectId, lookupProjectMapping, getMappingsFilePath } = mod;
+			expect(getProjectId).toBeDefined();
+			expect(lookupProjectMapping).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const staleDir = resolve(mappingsHome, "stale-case");
+			mkdirSync(staleDir);
+			const { execSync } = await import("node:child_process");
+			execSync("git init", { cwd: staleDir });
+			// Intentionally do NOT add a remote, so git lookup fails
+
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [resolve(staleDir)]: "github.com/stale/wrong" }),
+				"utf-8",
+			);
+
+			const projectId = await getProjectId(staleDir);
+			expect(projectId).toMatch(/^local-[a-f0-9]{12}-stale-case$/);
+			expect(lookupProjectMapping(resolve(staleDir))).toBe("github.com/stale/wrong");
+		});
+
+		it("2.5.c invalidates decode cache when mappings file changes after filesystem decode", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir, getMappingsFilePath } = mod;
+			expect(decodeProjectDir).toBeDefined();
+			expect(getMappingsFilePath).toBeDefined();
+
+			const worktreeDir = resolve(mappingsHome, "deleted-worktree");
+			mkdirSync(worktreeDir, { recursive: true });
+
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(worktreeDir);
+
+			expect(decodeProjectDir(encoded)).toBe(worktreeDir);
+
+			rmSync(worktreeDir, { recursive: true, force: true });
+			writeFileSync(
+				getMappingsFilePath(),
+				JSON.stringify({ [worktreeDir]: "github.com/cloudflare/vinext" }),
+				"utf-8",
+			);
+
+			expect(decodeProjectDir(encoded)).toBe(worktreeDir);
+		});
+
+		it("2.7 decodeProjectDir correctly decodes directories with literal dashes inside them by checking disk", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir } = mod;
+			expect(decodeProjectDir).toBeDefined();
+
+			// Create a directory with literal dashes in the path inside our tmpDir
+			const testDir = join(tmpDir, "vinext-earnest");
+			mkdirSync(testDir, { recursive: true });
+
+			// The encoded key for testDir (e.g. /tmp/divmemory-cli-xxxx/vinext-earnest)
+			// should be -tmp-divmemory-cli-xxxx-vinext-earnest
+			const { encodePath } = await import("@divmemory/plugin/project-mappings");
+			const encoded = encodePath(testDir);
+
+			const decoded = decodeProjectDir(encoded);
+			expect(decoded).toBe(testDir);
 		});
 	});
 

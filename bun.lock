@@ -19,6 +19,9 @@
       "bin": {
         "divmemory-bootstrap": "./dist/cli.js",
       },
+      "dependencies": {
+        "@divmemory/plugin": "workspace:*",
+      },
       "devDependencies": {
         "@types/node": "^25.9.0",
         "typescript": "^6.0.3",

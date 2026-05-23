@@ -1,47 +1,18 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+import {
+	divmemoryHome,
+	getProjectId,
+	getProjectName,
+	hasGitOrigin,
+	writeProjectMapping,
+} from "../scripts/project-mappings.mjs";
+
+export { getProjectId };
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
-
-export async function getProjectId(cwd) {
-	const projectCwd = cwd || process.cwd();
-	try {
-		const result = await new Promise((resolve, reject) => {
-			const child = spawn("git", ["-C", projectCwd, "remote", "get-url", "origin"], {
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let stdout = "";
-			let stderr = "";
-			child.stdout.on("data", (d) => {
-				stdout += d;
-			});
-			child.stderr.on("data", (d) => {
-				stderr += d;
-			});
-			child.on("error", (err) => reject(err));
-			child.on("close", (code) => {
-				if (code === 0) resolve(stdout.trim());
-				else reject(new Error(stderr || `git exited ${code}`));
-			});
-		});
-
-		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
-		normalized = normalized.toLowerCase();
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
-		if (normalized.startsWith("git@")) {
-			normalized = normalized.replace(/^git@/, "").replace(":", "/");
-		}
-		return normalized;
-	} catch {
-		const absolute = resolve(projectCwd);
-		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
-		return `local-${hash}-${basename(absolute)}`;
-	}
-}
 
 function workerUrl() {
 	return process.env.DIVMEMORY_WORKER_URL || DEFAULT_WORKER_URL;
@@ -49,10 +20,6 @@ function workerUrl() {
 
 function apiKey() {
 	return process.env.DIVMEMORY_API_KEY;
-}
-
-function divmemoryHome() {
-	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
 }
 
 function cachePath(projectId) {
@@ -213,13 +180,6 @@ export function extractConversation(jsonlContent) {
 	return turns.join("\n\n");
 }
 
-function projectName(projectId) {
-	const local = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
-	if (local) return local[1];
-	const lastSlash = projectId.lastIndexOf("/");
-	return lastSlash >= 0 ? projectId.slice(lastSlash + 1) : projectId;
-}
-
 export async function processSessionStart(stdinData, deps = {}) {
 	const stderr = deps.stderr || ((s) => process.stderr.write(`${s}\n`));
 	const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -318,6 +278,16 @@ export async function processSessionEnd(stdinData, deps = {}) {
 		return { exitCode: 0 };
 	}
 
+	const projectId = await getProjectId(payload.cwd || process.cwd());
+	const resolvedCwd = resolve(payload.cwd || process.cwd());
+	try {
+		if (await hasGitOrigin(resolvedCwd)) {
+			await writeProjectMapping(resolvedCwd, projectId);
+		}
+	} catch (err) {
+		stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`);
+	}
+
 	const key = apiKey();
 	if (!key) {
 		stderr("[divmemory] DIVMEMORY_API_KEY not set. Skipping ingestion.");
@@ -325,8 +295,6 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 	const url = workerUrl();
 	await flushQueue(fetch_, url, key, stderr);
-
-	const projectId = await getProjectId(payload.cwd || process.cwd());
 	let conversation = "";
 	try {
 		conversation = extractConversation(await readFile(payload.transcript_path, "utf-8"));
@@ -337,7 +305,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	const body = {
 		session_id: payload.session_id,
 		project_id: projectId,
-		project_name: projectName(projectId),
+		project_name: getProjectName(projectId),
 		source: "droid",
 		conversation,
 		metadata: {},

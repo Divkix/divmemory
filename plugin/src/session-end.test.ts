@@ -1,8 +1,10 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { mappingsPath, writeProjectMapping } from "../scripts/project-mappings.mjs";
 import { extractConversation, getProjectId, processSessionEnd } from "../scripts/session-end.mjs";
 
 describe("session-end hook", () => {
@@ -931,6 +933,200 @@ describe("session-end hook", () => {
 			expect(conv.length).toBeLessThan(10000);
 			expect(conv.startsWith("User: AAAA")).toBe(true);
 			expect(conv.endsWith("AAAA")).toBe(true);
+		});
+	});
+
+	describe("project path mappings (issue #13)", () => {
+		function makeJsonlForSession(): string {
+			return makeJsonl([{ role: "user", content: "hello" }]);
+		}
+
+		it("2.1 writes path-to-remote mapping on session-end for git repos", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const gitDir = join(tmpDir, "git-worktree");
+			const { execSync } = await import("node:child_process");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/cloudflare/vinext.git", {
+				cwd: gitDir,
+			});
+			writeFileSync(join(gitDir, "test.jsonl"), makeJsonlForSession(), "utf-8");
+
+			await processSessionEnd(
+				JSON.stringify({
+					session_id: "map-session-1",
+					cwd: gitDir,
+					transcript_path: join(gitDir, "test.jsonl"),
+					hook_event_name: "SessionEnd",
+				}),
+				{
+					fetch: async () =>
+						new Response(JSON.stringify({ ok: true, facts_written: 1 }), { status: 200 }),
+					stderr: () => {},
+					stdout: () => {},
+				},
+			);
+
+			const mappingsFile = join(tmpDir, "project_mappings.json");
+			expect(existsSync(mappingsFile)).toBe(true);
+			const mappings = JSON.parse(readFileSync(mappingsFile, "utf-8")) as Record<string, string>;
+			expect(mappings[resolve(gitDir)]).toBe("github.com/cloudflare/vinext");
+		});
+
+		it("2.2 does not write mapping when project id is local-* fallback", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const noGitDir = join(tmpDir, "no-git-mapping");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(noGitDir, { recursive: true });
+			writeFileSync(join(noGitDir, "test.jsonl"), makeJsonlForSession(), "utf-8");
+
+			await processSessionEnd(
+				JSON.stringify({
+					session_id: "map-session-2",
+					cwd: noGitDir,
+					transcript_path: join(noGitDir, "test.jsonl"),
+					hook_event_name: "SessionEnd",
+				}),
+				{
+					fetch: async () =>
+						new Response(JSON.stringify({ ok: true, facts_written: 1 }), { status: 200 }),
+					stderr: () => {},
+					stdout: () => {},
+				},
+			);
+
+			const mappingsFile = join(tmpDir, "project_mappings.json");
+			// Poll/wait for mapping persistence to settle
+			let lastContent = "";
+			const pollStart = Date.now();
+			while (Date.now() - pollStart < 200) {
+				try {
+					if (existsSync(mappingsFile)) {
+						const current = readFileSync(mappingsFile, "utf-8");
+						if (current === lastContent && current !== "") {
+							break;
+						}
+						lastContent = current;
+					}
+				} catch {
+					// ignore
+				}
+				await new Promise((r) => setTimeout(r, 10));
+			}
+
+			if (existsSync(mappingsFile)) {
+				const mappings = JSON.parse(readFileSync(mappingsFile, "utf-8")) as Record<string, string>;
+				expect(mappings[resolve(noGitDir)]).toBeUndefined();
+			}
+		});
+
+		it("getProjectId uses central mapping when git is unavailable and path is missing", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			const worktreePath = resolve(tmpDir, "mapped-only");
+			// Do NOT create the directory so the mapping fallback is used
+			const { writeFileSync: writeFs } = await import("node:fs");
+			writeFs(
+				join(tmpDir, "project_mappings.json"),
+				JSON.stringify({ [worktreePath]: "github.com/org/mapped-repo" }),
+				"utf-8",
+			);
+			const id = await getProjectId(worktreePath);
+			expect(id).toBe("github.com/org/mapped-repo");
+		});
+
+		it("2.3 writeProjectMapping survives concurrent writes", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			const paths = Array.from({ length: 12 }, (_, i) => resolve(tmpDir, `concurrent-${i}`));
+			await Promise.all(
+				paths.map((absolutePath, i) =>
+					writeProjectMapping(absolutePath, `github.com/org/repo-${i}`, { home: tmpDir }),
+				),
+			);
+
+			const mappings = JSON.parse(readFileSync(mappingsPath(tmpDir), "utf-8")) as Record<
+				string,
+				string
+			>;
+			for (let i = 0; i < paths.length; i++) {
+				expect(mappings[paths[i]]).toBe(`github.com/org/repo-${i}`);
+			}
+		});
+
+		it("2.3b writeProjectMapping survives cross-process concurrent writes", async () => {
+			process.env.DIVMEMORY_HOME = tmpDir;
+			const modulePath = fileURLToPath(new URL("../scripts/project-mappings.mjs", import.meta.url));
+			const scriptPath = resolve(tmpDir, "helper.mjs");
+			writeFileSync(
+				scriptPath,
+				`import { writeProjectMapping } from "${modulePath.replace(/\\/g, "\\\\")}";\n` +
+					`import { resolve } from "node:path";\n` +
+					`const i = process.argv[2];\n` +
+					`const home = process.env.DIVMEMORY_HOME;\n` +
+					`await writeProjectMapping(resolve(home, \`concurrent-\${i}\`), \`github.com/org/repo-\${i}\`, { home });\n`,
+				"utf-8",
+			);
+			const { spawn } = await import("node:child_process");
+			const children = Array.from(
+				{ length: 6 },
+				(_, i) =>
+					new Promise<void>((resolvePromise, reject) => {
+						const child = spawn("node", [scriptPath, String(i)], {
+							env: { ...process.env, DIVMEMORY_HOME: tmpDir },
+						});
+						child.on("error", reject);
+						child.on("close", (code) => {
+							if (code === 0) resolvePromise();
+							else reject(new Error(`child exited ${code}`));
+						});
+					}),
+			);
+			await Promise.all(children);
+
+			const mappings = JSON.parse(readFileSync(mappingsPath(tmpDir), "utf-8")) as Record<
+				string,
+				string
+			>;
+			for (let i = 0; i < 6; i++) {
+				expect(mappings[resolve(tmpDir, `concurrent-${i}`)]).toBe(`github.com/org/repo-${i}`);
+			}
+		});
+
+		it("divmemory runtime processSessionEnd writes mappings for git repos", async () => {
+			const { processSessionEnd: runtimeSessionEnd } = await import(
+				"../../plugins/divmemory/hooks/runtime.mjs"
+			);
+			process.env.DIVMEMORY_HOME = tmpDir;
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const gitDir = join(tmpDir, "runtime-git");
+			const { execSync } = await import("node:child_process");
+			const { mkdirSync } = await import("node:fs");
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/runtime-test.git", {
+				cwd: gitDir,
+			});
+			writeFileSync(join(gitDir, "test.jsonl"), makeJsonlForSession(), "utf-8");
+
+			await runtimeSessionEnd(
+				JSON.stringify({
+					session_id: "runtime-map-session",
+					cwd: gitDir,
+					transcript_path: join(gitDir, "test.jsonl"),
+					hook_event_name: "SessionEnd",
+				}),
+				{
+					fetch: async () =>
+						new Response(JSON.stringify({ ok: true, facts_written: 1 }), { status: 200 }),
+					stderr: () => {},
+				},
+			);
+			const mappings = JSON.parse(
+				readFileSync(join(tmpDir, "project_mappings.json"), "utf-8"),
+			) as Record<string, string>;
+			expect(mappings[resolve(gitDir)]).toBe("github.com/divkix/runtime-test");
 		});
 	});
 });

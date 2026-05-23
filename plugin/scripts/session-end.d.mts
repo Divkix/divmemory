@@ -1,4 +1,4 @@
-export function getProjectId(cwd: string): Promise<string>;
+export { getProjectId } from "./project-mappings.mjs";
 export function extractConversation(jsonlContent: string): string;
 export function processSessionEnd(
 	stdinData: string,

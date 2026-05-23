@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
 	appendFile,
 	mkdir,
@@ -8,59 +6,19 @@ import {
 	rename,
 	writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+import {
+	divmemoryHome,
+	getProjectId,
+	getProjectName,
+	hasGitOrigin,
+	writeProjectMapping,
+} from "./project-mappings.mjs";
+
+export { getProjectId } from "./project-mappings.mjs";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
-
-/**
- * Get the project ID from a directory.
- * Tries `git remote get-url origin` first, falls back to a hashed absolute-path slug.
- * Normalizes .git suffix, trailing slashes, and lowercases the URL.
- */
-export async function getProjectId(cwd) {
-	const projectCwd = cwd || process.cwd();
-	try {
-		const result = await new Promise((resolve, reject) => {
-			const child = spawn("git", ["-C", projectCwd, "remote", "get-url", "origin"], {
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let stdout = "";
-			let stderr = "";
-			child.stdout.on("data", (d) => {
-				stdout += d;
-			});
-			child.stderr.on("data", (d) => {
-				stderr += d;
-			});
-			child.on("error", (err) => reject(err));
-			child.on("close", (code) => {
-				if (code === 0) resolve(stdout.trim());
-				else reject(new Error(stderr || `git exited ${code}`));
-			});
-		});
-
-		// Normalize: strip .git suffix and trailing slashes
-		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
-
-		// Lowercase the string
-		normalized = normalized.toLowerCase();
-
-		// Strip protocol (https://, ssh://, etc.)
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
-
-		// Convert SSH "git@host:path" to "host/path"
-		if (normalized.startsWith("git@")) {
-			normalized = normalized.replace(/^git@/, "").replace(":", "/");
-		}
-
-		return normalized;
-	} catch {
-		const absolute = resolve(projectCwd);
-		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
-		return `local-${hash}-${basename(absolute)}`;
-	}
-}
 
 /**
  * Extract clean conversation text from a JSONL transcript string.
@@ -138,25 +96,8 @@ export function extractConversation(jsonlContent) {
 	return turns.join("\n\n");
 }
 
-/**
- * Determine project_name from project_id.
- * If project_id is a path-like string, uses basename; otherwise returns project_id.
- */
-function getProjectName(projectId) {
-	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
-	if (localMatch) return localMatch[1];
-	// If it contains a slash, extract the last segment
-	const lastSlash = projectId.lastIndexOf("/");
-	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
-	return projectId;
-}
-
-function getDivmemoryHome() {
-	return process.env.DIVMEMORY_HOME || join(homedir(), ".divmemory");
-}
-
 function getQueuePath() {
-	return join(getDivmemoryHome(), "queue.jsonl");
+	return join(divmemoryHome(), "queue.jsonl");
 }
 
 async function postIngest(fetch_, workerUrl, apiKey, body) {
@@ -238,7 +179,6 @@ async function flushQueue(fetch_, workerUrl, apiKey, stderr) {
  */
 export async function processSessionEnd(stdinData, deps = {}) {
 	const stderr = deps.stderr || ((s) => process.stderr.write(`${s}\n`));
-	const _stdout = deps.stdout || ((s) => process.stdout.write(s));
 	const fetch_ = deps.fetch || ((...args) => fetch(...args));
 
 	const WORKER_URL = process.env.DIVMEMORY_WORKER_URL || DEFAULT_WORKER_URL;
@@ -277,6 +217,14 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	}
 
 	const projectId = await getProjectId(cwd || process.cwd());
+	const resolvedCwd = resolve(cwd || process.cwd());
+	try {
+		if (await hasGitOrigin(resolvedCwd)) {
+			await writeProjectMapping(resolvedCwd, projectId);
+		}
+	} catch (err) {
+		stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`);
+	}
 
 	let conversation = "";
 	try {

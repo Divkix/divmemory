@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+
+import {
+	divmemoryHome,
+	getAllMappingKeys,
+	getProjectName,
+	lookupProjectMapping,
+	mappingsPath,
+	getProjectId as resolveProjectId,
+} from "@divmemory/plugin/project-mappings";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 const DEFAULT_LIMIT = 50;
@@ -130,36 +137,155 @@ export async function findSessionFiles(dir: string, limit = DEFAULT_LIMIT): Prom
 	return files.slice(0, limit);
 }
 
+const decodeCache = new Map<string, string>();
+
+function getMappingsMtimeMs(): number {
+	try {
+		return statSync(mappingsPath()).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+function getDecodeCacheKey(encoded: string): string {
+	return `${mappingsPath()}::${getMappingsMtimeMs()}::${encoded}`;
+}
+
 export function decodeProjectDir(encoded: string): string | null {
 	// The encoded format replaces / with - (e.g. /Users/div/projects/my-app -> -Users-div-projects-my-app)
 	if (!encoded.startsWith("-")) return null;
-	const rest = encoded.slice(1);
-	const dashCount = (rest.match(/-/g) || []).length;
 
-	// Ambiguity: dashes could be original directory names or encoded slashes.
-	// Try all combinations of treating each dash as either "/" or "-".
-	// Start with the assumption that ALL dashes were originally slashes (most common case for paths),
-	// then progressively try fewer replacements from the right, checking which decoded path exists.
-	for (let k = dashCount; k >= 0; k--) {
-		const dashPositions: number[] = [];
-		for (let i = 0; i < rest.length; i++) {
-			if (rest[i] === "-") dashPositions.push(i);
-		}
-		const chars = rest.split("");
-		for (let i = 0; i < k; i++) {
-			chars[dashPositions[i]] = "/";
-		}
-		const attempt = `/${chars.join("")}`;
-		try {
-			if (statSync(attempt).isDirectory()) return attempt;
-		} catch {
-			// ignore
+	const cacheKey = getDecodeCacheKey(encoded);
+	if (decodeCache.has(cacheKey)) {
+		return decodeCache.get(cacheKey) ?? null;
+	}
+
+	const rest = encoded.slice(1);
+	const dashPositions: number[] = [];
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "-") dashPositions.push(i);
+	}
+
+	// Split rest into segments using dashPositions
+	const segments: string[] = [];
+	let lastPos = 0;
+	for (const pos of dashPositions) {
+		segments.push(rest.slice(lastPos, pos));
+		lastPos = pos + 1;
+	}
+	segments.push(rest.slice(lastPos));
+
+	// Try to resolve by checking filesystem (handles paths with literal dashes)
+	const resolved = resolveDecodedPath(segments);
+	if (resolved) {
+		decodeCache.set(cacheKey, resolved);
+		return resolved;
+	}
+
+	// Consult central mapping for deleted worktrees with literal dashes
+	const keys = getAllMappingKeys();
+	for (const key of keys) {
+		if (key.startsWith("/")) {
+			const stripped = key.slice(1);
+			const encodedKey = stripped.replace(/\//g, "-");
+			if (encodedKey === rest) {
+				decodeCache.set(cacheKey, key);
+				return key;
+			}
 		}
 	}
 
-	// If no decoded path exists on disk, return the fully-decoded path anyway
-	// (the caller will fall back to basename if git remote doesn't work).
+	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
 	return `/${rest.replace(/-/g, "/")}`;
+}
+
+/**
+ * The encoding scheme replaces "/" with "-" (e.g. /Users/div/projects/my-app -> -Users-div-projects-my-app).
+ * This is lossy when paths contain literal dashes — the decoder can't distinguish
+ * which "-" was a "/" vs a literal "-" character.
+ *
+ * This BFS walk resolves the ambiguity by checking each candidate path against
+ * the filesystem at every depth level, pruning branches that don't exist on disk.
+ * For each segment it tries two interpretations:
+ *   A) join with "/" — the segment was part of a deeper directory (only if parent exists)
+ *   B) join with "-" — the dash is literal, segment is a flat path component
+ *
+ * Returns the first fully-existing path found, or null if none exist.
+ */
+export function resolveDecodedPath(segments: string[]): string | null {
+	interface Candidate {
+		path: string;
+		exists: boolean;
+		lastExistingDir: string;
+	}
+
+	const firstPath = `/${segments[0]}`;
+	let firstExists = false;
+	try {
+		firstExists = statSync(firstPath).isDirectory();
+	} catch {}
+
+	let candidates: Candidate[] = [
+		{
+			path: firstPath,
+			exists: firstExists,
+			lastExistingDir: firstExists ? firstPath : "/",
+		},
+	];
+
+	for (let i = 1; i < segments.length; i++) {
+		const nextSegment = segments[i];
+		const nextCandidates: Candidate[] = [];
+
+		for (const cand of candidates) {
+			// Option A: Join with "/" (only if parent/cand itself is a verified existing directory)
+			if (cand.exists) {
+				const slashPath = `${cand.path}/${nextSegment}`;
+				let slashExists = false;
+				try {
+					slashExists = statSync(slashPath).isDirectory();
+				} catch {}
+
+				nextCandidates.push({
+					path: slashPath,
+					exists: slashExists,
+					lastExistingDir: slashExists ? slashPath : cand.path,
+				});
+			}
+
+			// Option B: Join with "-" (parent is cand.lastExistingDir, which is verified to exist)
+			const dashPath = `${cand.path}-${nextSegment}`;
+			let dashExists = false;
+			try {
+				dashExists = statSync(dashPath).isDirectory();
+			} catch {}
+
+			nextCandidates.push({
+				path: dashPath,
+				exists: dashExists,
+				lastExistingDir: dashExists ? dashPath : cand.lastExistingDir,
+			});
+		}
+
+		const merged = new Map<string, Candidate>();
+		for (const cand of nextCandidates) {
+			const key = `${cand.path}:${cand.exists}`;
+			const existing = merged.get(key);
+			if (!existing || (!existing.exists && cand.exists)) {
+				merged.set(key, cand);
+			}
+		}
+		candidates = Array.from(merged.values());
+	}
+
+	// Check if any candidate of the full path exists as a directory
+	for (const cand of candidates) {
+		if (cand.exists) {
+			return cand.path;
+		}
+	}
+
+	return null;
 }
 
 export function extractConversation(jsonlContent: string): string {
@@ -229,47 +355,14 @@ export function extractConversation(jsonlContent: string): string {
 	return turns.join("\n\n");
 }
 
-export async function getProjectId(cwd: string): Promise<string> {
-	try {
-		const result = await new Promise<string>((resolve, reject) => {
-			const child = spawn("git", ["-C", cwd, "remote", "get-url", "origin"], {
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-			let stdout = "";
-			let stderr = "";
-			child.stdout.on("data", (d: string) => {
-				stdout += d;
-			});
-			child.stderr.on("data", (d: string) => {
-				stderr += d;
-			});
-			child.on("error", (err) => reject(err));
-			child.on("close", (code) => {
-				if (code === 0) resolve(stdout.trim());
-				else reject(new Error(stderr || `git exited ${code}`));
-			});
-		});
+export { divmemoryHome, lookupProjectMapping };
 
-		let normalized = result.replace(/\.git$/, "").replace(/\/+$/, "");
-		normalized = normalized.toLowerCase();
-		normalized = normalized.replace(/^[a-z]+:\/\//, "");
-		if (normalized.startsWith("git@")) {
-			normalized = normalized.replace(/^git@/, "").replace(":", "/");
-		}
-		return normalized;
-	} catch {
-		const absolute = resolve(cwd || process.cwd());
-		const hash = createHash("sha256").update(absolute).digest("hex").slice(0, 12);
-		return `local-${hash}-${basename(absolute)}`;
-	}
+export function getMappingsFilePath(): string {
+	return mappingsPath();
 }
 
-export function getProjectName(projectId: string): string {
-	const localMatch = projectId.match(/^local-[a-f0-9]{12}-(.+)$/);
-	if (localMatch) return localMatch[1] ?? projectId;
-	const lastSlash = projectId.lastIndexOf("/");
-	if (lastSlash >= 0) return projectId.slice(lastSlash + 1);
-	return projectId;
+export async function getProjectId(cwd: string): Promise<string> {
+	return resolveProjectId(cwd);
 }
 
 export function getSessionIdFromFilename(filename: string): string {
