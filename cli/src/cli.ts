@@ -11,7 +11,7 @@ import {
 	lookupProjectMapping,
 	mappingsPath,
 	getProjectId as resolveProjectId,
-} from "../../plugin/scripts/project-mappings.mjs";
+} from "@divmemory/plugin/project-mappings";
 
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 const DEFAULT_LIMIT = 50;

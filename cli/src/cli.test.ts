@@ -1792,7 +1792,7 @@ describe("bootstrap cli", () => {
 		it("2.6 verifies writeProjectMapping/lookupProjectMapping for absolute-path keys", async () => {
 			const mod = await loadCliModule();
 			const { getProjectId, lookupProjectMapping } = mod;
-			const { writeProjectMapping } = await import("../../plugin/scripts/project-mappings.mjs");
+			const { writeProjectMapping } = await import("@divmemory/plugin/project-mappings");
 			expect(getProjectId).toBeDefined();
 			expect(lookupProjectMapping).toBeDefined();
 			expect(writeProjectMapping).toBeDefined();
