@@ -267,7 +267,15 @@ export function resolveDecodedPath(segments: string[]): string | null {
 			});
 		}
 
-		candidates = nextCandidates;
+		const merged = new Map<string, Candidate>();
+		for (const cand of nextCandidates) {
+			const key = `${cand.lastExistingDir}:${cand.exists}`;
+			const existing = merged.get(key);
+			if (!existing || (!existing.exists && cand.exists)) {
+				merged.set(key, cand);
+			}
+		}
+		candidates = Array.from(merged.values());
 	}
 
 	// Check if any candidate of the full path exists as a directory
