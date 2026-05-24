@@ -784,8 +784,9 @@ async function main() {
 }
 
 if (
-	import.meta.url === `file://${process.argv[1]}` ||
-	fileURLToPath(import.meta.url) === resolve(process.argv[1])
+	typeof process.argv[1] === "string" &&
+	(import.meta.url === `file://${process.argv[1]}` ||
+		fileURLToPath(import.meta.url) === resolve(process.argv[1]))
 ) {
 	main();
 }

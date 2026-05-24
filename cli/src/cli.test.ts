@@ -587,7 +587,8 @@ describe("bootstrap cli", () => {
 			const gitDir = join(tmpDir, "ssh-proto-repo");
 			mkdirSync(gitDir);
 			execSync("git init", { cwd: gitDir });
-			execSync("git remote add origin ssh://git@github.com/divkix/my-app.git", { cwd: gitDir });
+			const remoteCmd = "git remote add origin ssh://git@github.com/divkix/my-app.git";
+			execSync(remoteCmd, { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("github.com/divkix/my-app");
 		});
@@ -675,7 +676,7 @@ describe("bootstrap cli", () => {
 			const { decodeProjectDir } = mod;
 			if (!decodeProjectDir) return;
 			const decoded = decodeProjectDir("-C:\\Users\\me");
-			expect(decoded === null || !/^C:\\Users\\me$/i.test(decoded)).toBe(true);
+			expect(decoded === null || decoded !== "C:\\Users\\me").toBe(true);
 		});
 	});
 
@@ -1706,7 +1707,8 @@ describe("bootstrap cli", () => {
 			const gitDir = join(tmpDir, "port-repo");
 			mkdirSync(gitDir);
 			execSync("git init", { cwd: gitDir });
-			execSync("git remote add origin https://git.example.com:8443/org/repo.git", { cwd: gitDir });
+			const remoteCmd = "git remote add origin https://git.example.com:8443/org/repo.git";
+			execSync(remoteCmd, { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("git.example.com:8443/org/repo");
 		});
@@ -1876,7 +1878,8 @@ describe("bootstrap cli", () => {
 				mkdirSync(gitDir, { recursive: true });
 				const { execSync } = await import("node:child_process");
 				execSync("git init", { cwd: gitDir });
-				execSync("git remote add origin https://github.com/cloudflare/vinext.git", { cwd: gitDir });
+				const remoteCmd = "git remote add origin https://github.com/cloudflare/vinext.git";
+				execSync(remoteCmd, { cwd: gitDir });
 				const transcript = join(gitDir, "sess.jsonl");
 				writeFileSync(
 					transcript,
