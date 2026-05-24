@@ -39,6 +39,34 @@ export function encodePath(absolutePath) {
 	return `-${path.slice(1).replace(/\//g, "-")}`;
 }
 
+export function parseEncodedPath(encoded) {
+	if (!encoded.startsWith("-")) return null;
+
+	let windowsDrive = null;
+	let rest = encoded.slice(1);
+
+	if (rest.startsWith("__drive_")) {
+		const candidate = rest[8];
+		if (candidate && /^[A-Za-z]$/.test(candidate)) {
+			windowsDrive = candidate.toLowerCase();
+			rest = rest.length > 9 && rest[9] === "-" ? rest.slice(10) : rest.slice(9);
+		}
+	}
+
+	const segments = rest.split("-");
+	const decodedPath = windowsDrive
+		? `${windowsDrive.toUpperCase()}:${rest.length > 0 ? `/${rest.replace(/-/g, "/")}` : "/"}`
+		: `/${rest.replace(/-/g, "/")}`;
+
+	return { rest, segments, windowsDrive, decodedPath };
+}
+
+export function encodedPathMatchesKey(encoded, key) {
+	if (!parseEncodedPath(encoded)) return false;
+	if (!isAbsolute(key) && !/^[A-Za-z]:[\\/]/.test(key)) return false;
+	return encodePath(key) === encoded;
+}
+
 function isAbsoluteOrEncodedPath(pathValue) {
 	if (isAbsolute(pathValue) || /^[A-Za-z]:[\\/]/.test(pathValue)) return true;
 	return /^-(?:__drive_[a-z]-)?[^/\\]+$/.test(pathValue);

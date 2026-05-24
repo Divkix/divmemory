@@ -1,31 +1,18 @@
-import { afterEach, describe, expect, it } from "vitest";
-
-const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
-const originalWorkerUrl = process.env.DIVMEMORY_WORKER_URL;
-
-async function loadWorkerUrl() {
-	const mod = await import(`./index.ts?case=${crypto.randomUUID()}`);
-	return mod.workerUrl as string;
-}
-
-afterEach(() => {
-	if (originalWorkerUrl === undefined) {
-		delete process.env.DIVMEMORY_WORKER_URL;
-	} else {
-		process.env.DIVMEMORY_WORKER_URL = originalWorkerUrl;
-	}
-});
+import { DEFAULT_WORKER_URL, resolveWorkerUrl } from "@divmemory/plugin/config";
+import { describe, expect, it } from "vitest";
+import { workerUrl } from "./index";
 
 describe("workerUrl", () => {
-	it("falls back for whitespace-only DIVMEMORY_WORKER_URL", async () => {
-		process.env.DIVMEMORY_WORKER_URL = " \t\n ";
-
-		await expect(loadWorkerUrl()).resolves.toBe(DEFAULT_WORKER_URL);
+	it("exports the resolved worker URL", () => {
+		expect(typeof workerUrl).toBe("string");
+		expect(workerUrl.length).toBeGreaterThan(0);
 	});
 
-	it("trims configured DIVMEMORY_WORKER_URL", async () => {
-		process.env.DIVMEMORY_WORKER_URL = " https://custom.example.com ";
+	it("falls back for whitespace-only DIVMEMORY_WORKER_URL", () => {
+		expect(resolveWorkerUrl(" \t\n ")).toBe(DEFAULT_WORKER_URL);
+	});
 
-		await expect(loadWorkerUrl()).resolves.toBe("https://custom.example.com");
+	it("trims configured DIVMEMORY_WORKER_URL", () => {
+		expect(resolveWorkerUrl(" https://custom.example.com ")).toBe("https://custom.example.com");
 	});
 });

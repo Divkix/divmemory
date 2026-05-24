@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
+import { resolveWorkerUrl } from "./config.mjs";
 import {
 	divmemoryHome,
 	getProjectId,
@@ -17,8 +18,6 @@ import {
 } from "./project-mappings.mjs";
 
 export { getProjectId } from "./project-mappings.mjs";
-
-const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 
 /**
  * Extract clean conversation text from a JSONL transcript string.
@@ -181,11 +180,7 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	const stderr = deps.stderr || ((s) => process.stderr.write(`${s}\n`));
 	const fetch_ = deps.fetch || ((...args) => fetch(...args));
 
-	const envWorkerUrl = process.env.DIVMEMORY_WORKER_URL;
-	const WORKER_URL =
-		envWorkerUrl && envWorkerUrl !== "undefined" && envWorkerUrl !== "null"
-			? envWorkerUrl
-			: DEFAULT_WORKER_URL;
+	const WORKER_URL = resolveWorkerUrl();
 	const API_KEY = process.env.DIVMEMORY_API_KEY;
 
 	if (!stdinData?.trim()) {

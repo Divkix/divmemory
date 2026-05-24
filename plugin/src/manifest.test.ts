@@ -107,11 +107,13 @@ describe("plugin manifest", () => {
 	});
 
 	describe("DIVMEMORY_WORKER_URL propagation", () => {
-		it("hooks reference DIVMEMORY_WORKER_URL in source", () => {
+		it("hooks use the shared worker URL resolver", () => {
 			const endScript = readFileSync(join(pluginDir, "scripts", "session-end.mjs"), "utf-8");
 			const startScript = readFileSync(join(pluginDir, "scripts", "session-start.mjs"), "utf-8");
-			expect(endScript).toContain("DIVMEMORY_WORKER_URL");
-			expect(startScript).toContain("DIVMEMORY_WORKER_URL");
+			const configScript = readFileSync(join(pluginDir, "scripts", "config.mjs"), "utf-8");
+			expect(endScript).toContain("resolveWorkerUrl");
+			expect(startScript).toContain("resolveWorkerUrl");
+			expect(configScript).toContain("DIVMEMORY_WORKER_URL");
 		});
 
 		it("CLI references DIVMEMORY_WORKER_URL in source", () => {

@@ -66,13 +66,8 @@ jobs:
       - name: Prepare local D1 for E2E
         working-directory: worker
         run: |
-          cat > .dev.vars <<'EOF'
-          DIVMEMORY_API_KEY=e2e-api-key
-          DIVMEMORY_WEB_PASSWORD=e2e-test-password
-          COOKIE_SECRET=e2e-test-cookie-secret
-          EOF
-          bun wrangler d1 execute divmemory-db --local --file=migrations/0000_giant_tyrannus.sql
-          bun wrangler d1 execute divmemory-db --local --file=migrations/0001_sloppy_punisher.sql
+          bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0000_giant_tyrannus.sql
+          bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0001_sloppy_punisher.sql
 
       - name: E2E tests
         run: bun run test:e2e

@@ -21,7 +21,7 @@ export default defineConfig({
 		{ name: "mobile", use: { ...devices["Pixel 5"], viewport: { width: 390, height: 844 } } },
 	],
 	webServer: {
-		command: "sh e2e/start-worker.sh",
+		command: "cd worker && bun wrangler dev --config wrangler.e2e.jsonc --port 8787",
 		url: `${baseURL}/health`,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,

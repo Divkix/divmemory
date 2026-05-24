@@ -13,6 +13,10 @@
 		"./project-mappings": {
 			"types": "./scripts/project-mappings.d.mts",
 			"default": "./scripts/project-mappings.mjs"
+		},
+		"./config": {
+			"types": "./scripts/config.d.mts",
+			"default": "./scripts/config.mjs"
 		}
 	},
 	"scripts": {

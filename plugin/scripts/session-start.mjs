@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { resolveWorkerUrl } from "./config.mjs";
 import {
 	divmemoryHome,
 	getProjectId,
@@ -17,13 +18,6 @@ import {
 } from "./project-mappings.mjs";
 
 export { getProjectId };
-
-const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
-
-function getWorkerUrl() {
-	const raw = process.env.DIVMEMORY_WORKER_URL;
-	return raw && raw !== "undefined" && raw !== "null" ? raw : DEFAULT_WORKER_URL;
-}
 
 function getApiKey() {
 	return process.env.DIVMEMORY_API_KEY;
@@ -67,7 +61,7 @@ export async function processSessionStart(stdinData, deps = {}) {
 	const stdout = deps.stdout || ((s) => process.stdout.write(s));
 	const fetch_ = deps.fetch || ((...args) => fetch(...args));
 
-	const WORKER_URL = getWorkerUrl();
+	const WORKER_URL = resolveWorkerUrl();
 	const API_KEY = getApiKey();
 
 	if (!stdinData?.trim()) {
