@@ -614,6 +614,23 @@ describe("bootstrap cli", () => {
 			expect(result.startsWith(process.cwd())).toBe(true);
 			expect(result).not.toContain("./sessions");
 		});
+
+		it("expands bare ~ to homedir", async () => {
+			const mod = await loadCliModule();
+			const { expandTilde } = mod;
+			if (!expandTilde) return;
+			const { homedir } = await import("node:os");
+			expect(expandTilde("~")).toBe(homedir());
+		});
+
+		it("leaves Windows absolute paths unchanged", async () => {
+			if (process.platform !== "win32") return;
+			const mod = await loadCliModule();
+			const { expandTilde } = mod;
+			if (!expandTilde) return;
+			const winPath = "C:\\Users\\me\\sessions";
+			expect(expandTilde(winPath)).toBe(winPath);
+		});
 	});
 
 	describe("project dir decoding from session path", () => {
@@ -625,6 +642,22 @@ describe("bootstrap cli", () => {
 			const decoded = decodeProjectDir(encoded);
 			expect(decoded).toContain("Users");
 			expect(decoded).toContain("myapp");
+		});
+
+		it("returns null for keys without leading dash (Unix encoding)", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir } = mod;
+			if (!decodeProjectDir) return;
+			expect(decodeProjectDir("Users-div-projects")).toBeNull();
+			expect(decodeProjectDir("C:\\Users\\me")).toBeNull();
+		});
+
+		it("does not decode Windows drive-letter paths from backslash-containing keys", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir } = mod;
+			if (!decodeProjectDir) return;
+			const decoded = decodeProjectDir("-C:\\Users\\me");
+			expect(decoded === null || !/^C:\\Users\\me$/i.test(decoded)).toBe(true);
 		});
 	});
 

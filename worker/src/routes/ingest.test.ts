@@ -1,6 +1,7 @@
 import type { Message, MessageBatch } from "@cloudflare/workers-types";
 import { and, eq, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/bun-sqlite";
+import * as fc from "fast-check";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
@@ -641,6 +642,68 @@ describe("jaccardSimilarity — token overlap dedup", () => {
 	});
 });
 
+const TRUNCATION_PREFIX = "[Conversation truncated for length...]\n\n";
+
+describe("jaccardSimilarity — properties", () => {
+	const arbitraryText = fc.oneof(fc.string(), fc.string({ unit: "grapheme" }));
+
+	it("never throws and returns a value in [0, 1]", () => {
+		fc.assert(
+			fc.property(arbitraryText, arbitraryText, (a, b) => {
+				const result = jaccardSimilarity(a, b);
+				expect(Number.isFinite(result)).toBe(true);
+				expect(result).toBeGreaterThanOrEqual(0);
+				expect(result).toBeLessThanOrEqual(1);
+			}),
+			{ numRuns: 200 },
+		);
+	});
+
+	it("returns 1 for identical strings with at least one token", () => {
+		fc.assert(
+			fc.property(fc.string({ minLength: 1 }), (s) => {
+				fc.pre(/[a-z0-9\u4e00-\u9fff]/i.test(s));
+				expect(jaccardSimilarity(s, s)).toBe(1);
+			}),
+			{ numRuns: 200 },
+		);
+	});
+
+	it("returns 0 for whitespace-only strings", () => {
+		const whitespaceOnly = fc
+			.array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 64 })
+			.map((chars) => chars.join(""));
+		fc.assert(
+			fc.property(whitespaceOnly, fc.string(), (ws, other) => {
+				expect(jaccardSimilarity(ws, other)).toBe(0);
+				expect(jaccardSimilarity(other, ws)).toBe(0);
+			}),
+			{ numRuns: 200 },
+		);
+	});
+
+	it("is symmetric", () => {
+		fc.assert(
+			fc.property(arbitraryText, arbitraryText, (a, b) => {
+				expect(jaccardSimilarity(a, b)).toBe(jaccardSimilarity(b, a));
+			}),
+			{ numRuns: 200 },
+		);
+	});
+
+	it("is case-insensitive for identical content", () => {
+		fc.assert(
+			fc.property(fc.string({ minLength: 1 }), (s) => {
+				const upper = s.toUpperCase();
+				const lower = s.toLowerCase();
+				if (upper === lower) return;
+				expect(jaccardSimilarity(upper, lower)).toBe(1);
+			}),
+			{ numRuns: 200 },
+		);
+	});
+});
+
 describe("truncateConversationFromEnd", () => {
 	it("returns short conversation unchanged", () => {
 		const convo = "User: hello\n\nAssistant: hi";
@@ -670,6 +733,83 @@ describe("truncateConversationFromEnd", () => {
 		const truncated = truncateConversationFromEnd(convo, 10);
 		expect(truncated).toContain("[Conversation truncated for length...]");
 		expect(truncated.endsWith("and stuff")).toBe(true);
+	});
+});
+
+describe("truncateConversationFromEnd — properties", () => {
+	const conversationArbitrary = fc.oneof(
+		fc.string(),
+		fc
+			.array(fc.constantFrom("\nUser:", "\nAssistant:", "User:", "Assistant:", "\n", ":"), {
+				minLength: 0,
+				maxLength: 80,
+			})
+			.map((parts) => parts.join("")),
+	);
+
+	it("returns input unchanged when text fits within maxChars", () => {
+		fc.assert(
+			fc.property(
+				fc.string({ maxLength: 500 }),
+				fc.integer({ min: 1, max: 1000 }),
+				(text, maxChars) => {
+					fc.pre(text.length <= maxChars);
+					expect(truncateConversationFromEnd(text, maxChars)).toBe(text);
+				},
+			),
+			{ numRuns: 200 },
+		);
+	});
+
+	it("output length is bounded when truncated", () => {
+		fc.assert(
+			fc.property(
+				fc.string({ minLength: 1, maxLength: 800 }),
+				fc.integer({ min: 1, max: 400 }),
+				(text, maxChars) => {
+					fc.pre(text.length > maxChars);
+					const result = truncateConversationFromEnd(text, maxChars);
+					expect(result.length).toBeLessThanOrEqual(TRUNCATION_PREFIX.length + maxChars + 1);
+				},
+			),
+			{ numRuns: 200 },
+		);
+	});
+
+	it("never throws on arbitrary input", () => {
+		fc.assert(
+			fc.property(conversationArbitrary, fc.integer({ min: 0, max: 500 }), (text, maxChars) => {
+				expect(() => truncateConversationFromEnd(text, maxChars)).not.toThrow();
+			}),
+			{ numRuns: 200, timeout: 2000 },
+		);
+	});
+
+	it("returns empty string for empty input", () => {
+		expect(truncateConversationFromEnd("", 100)).toBe("");
+		expect(truncateConversationFromEnd("", 0)).toBe("");
+	});
+
+	it("returns input unchanged when length equals maxChars", () => {
+		fc.assert(
+			fc.property(fc.string({ minLength: 1, maxLength: 200 }), (text) => {
+				expect(truncateConversationFromEnd(text, text.length)).toBe(text);
+			}),
+			{ numRuns: 200 },
+		);
+	});
+
+	it("maxChars 0 uses slice(-0) so non-empty text keeps full body after banner", () => {
+		const result = truncateConversationFromEnd("hello", 0);
+		expect(result).toBe(`${TRUNCATION_PREFIX}hello`);
+	});
+
+	it("does not treat inline User: without newline as a turn boundary", () => {
+		const convo = "prefix User: not a boundary\n\nUser: real turn";
+		const maxChars = convo.length - "real turn".length;
+		const result = truncateConversationFromEnd(convo, maxChars);
+		expect(result).toContain("[Conversation truncated for length...]");
+		expect(result.endsWith("User: real turn")).toBe(true);
 	});
 });
 

@@ -193,7 +193,9 @@ function getDecodeCacheKey(encoded: string): string {
 }
 
 export function decodeProjectDir(encoded: string): string | null {
-	// The encoded format replaces / with - (e.g. /Users/div/projects/my-app -> -Users-div-projects-my-app)
+	// Unix-oriented: encoded Factory session dirs replace "/" with "-" (e.g.
+	// /Users/div/projects/my-app -> -Users-div-projects-my-app). Keys must start
+	// with "-"; Windows drive-letter paths are not encoded/decoded here.
 	if (!encoded.startsWith("-")) return null;
 
 	const cacheKey = getDecodeCacheKey(encoded);

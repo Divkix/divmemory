@@ -8,5 +8,7 @@ build
 .wrangler
 *.tsbuildinfo
 coverage
+test-results
+playwright-report
 .DS_Store
 .antigravitycli/
