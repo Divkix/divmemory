@@ -19,7 +19,10 @@ describe("D1 integration (Miniflare)", () => {
 				"INSERT INTO sessions (id, project_id, source, raw_text, consolidated, created_at) VALUES (?, ?, 'test', 'User: hi', 0, ?)",
 			).bind("sess-cf-fk", "proj/cf-fk", now),
 			env.DB.prepare(
-				"INSERT INTO memories (id, project_id, source_session, topic, content, confidence, status, created_at, updated_at) VALUES (?, ?, ?, 'topic', 'content', 0.9, 'active', ?, ?)",
+				`INSERT INTO memories (
+					id, project_id, source_session, topic, content,
+					confidence, status, created_at, updated_at
+				) VALUES (?, ?, ?, 'topic', 'content', 0.9, 'active', ?, ?)`,
 			).bind("mem-cf-fk", "proj/cf-fk", "sess-cf-fk", now, now),
 		]);
 
@@ -45,7 +48,10 @@ describe("D1 integration (Miniflare)", () => {
 
 		const statements = Array.from({ length: 50 }, (_, i) =>
 			env.DB.prepare(
-				"INSERT INTO memories (id, project_id, source_session, topic, content, confidence, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, 'active', ?, ?)",
+				`INSERT INTO memories (
+					id, project_id, source_session, topic, content,
+					confidence, status, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
 			).bind(`mem-cf-bulk-${i}`, projectId, sessionId, `t${i}`, `body ${i}`, now, now),
 		);
 

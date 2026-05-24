@@ -1,7 +1,6 @@
 import type { Page } from "@playwright/test";
 
 export const E2E_PASSWORD = process.env.DIVMEMORY_WEB_PASSWORD ?? "e2e-test-password";
-export const E2E_PROJECT = "e2e-project";
 
 export async function login(page: Page, password = E2E_PASSWORD): Promise<void> {
 	await page.goto("/login");
@@ -13,11 +12,7 @@ export async function login(page: Page, password = E2E_PASSWORD): Promise<void> 
 }
 
 /** Seed a memory using the authenticated session cookie (hybridAuth). */
-export async function seedMemory(
-	page: Page,
-	content: string,
-	projectId = E2E_PROJECT,
-): Promise<string> {
+export async function seedMemory(page: Page, content: string, projectId: string): Promise<string> {
 	const res = await page.request.post("/memories", {
 		headers: { "Content-Type": "application/json" },
 		data: {

@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { E2E_PROJECT, login, seedMemory } from "./helpers";
+import { login, seedMemory } from "./helpers";
 
 test.describe("responsive layout", () => {
+	let projectId: string;
+
 	test.beforeEach(async ({ page }) => {
 		await login(page);
-		await seedMemory(page, `E2E responsive ${Date.now()}`, E2E_PROJECT);
-		await page.goto(`/?project=${encodeURIComponent(E2E_PROJECT)}`);
+		projectId = `e2e-proj-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+		await seedMemory(page, `E2E responsive ${Date.now()}`, projectId);
+		await page.goto(`/?project=${encodeURIComponent(projectId)}`);
 	});
 
 	test("sidebar navigation is visible", async ({ page }) => {

@@ -24,6 +24,10 @@ export default defineConfig(async () => {
 			}),
 		],
 		test: {
+			// Exception Policy: This configuration specifically targets integration tests that
+			// require the Cloudflare Workers pool environment (Miniflare, bindings, etc.).
+			// Non-integration and standard unit tests are co-located in the 'src/' directory
+			// and are run via the standard 'vitest.config.ts' configuration to avoid pool overhead.
 			include: ["tests/cloudflare/**/*.test.ts"],
 			setupFiles: ["./tests/cloudflare/setup.ts"],
 		},
