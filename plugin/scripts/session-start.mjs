@@ -21,7 +21,8 @@ export { getProjectId };
 const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 
 function getWorkerUrl() {
-	return process.env.DIVMEMORY_WORKER_URL || DEFAULT_WORKER_URL;
+	const raw = process.env.DIVMEMORY_WORKER_URL;
+	return raw && raw !== "undefined" && raw !== "null" ? raw : DEFAULT_WORKER_URL;
 }
 
 function getApiKey() {

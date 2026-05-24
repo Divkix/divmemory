@@ -126,7 +126,7 @@ export function lookupProjectMapping(absolutePath, options = {}) {
 			return null;
 		}
 		let mapped = mappings[absolutePath];
-		if (typeof mapped !== "string" && absolutePath.startsWith("/")) {
+		if (typeof mapped !== "string") {
 			const encodedKey = encodePath(absolutePath);
 			mapped = mappings[encodedKey];
 		}

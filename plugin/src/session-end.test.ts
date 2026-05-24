@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { mappingsPath, writeProjectMapping } from "../scripts/project-mappings.mjs";
@@ -201,9 +201,9 @@ describe("session-end hook", () => {
 			// Create a git repo with origin
 			const gitDir = join(tmpDir, "git-repo");
 			const { execSync } = await import("node:child_process");
-			execSync(
-				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin https://github.com/divkix/my-app.git`,
-			);
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/my-app.git", { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("github.com/divkix/my-app");
 		});
@@ -219,9 +219,9 @@ describe("session-end hook", () => {
 		it("normalizes HTTPS git remote URL (VAL-PLUGIN-004)", async () => {
 			const gitDir = join(tmpDir, "https-repo");
 			const { execSync } = await import("node:child_process");
-			execSync(
-				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin https://github.com/divkix/my-app.git`,
-			);
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/my-app.git", { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("github.com/divkix/my-app");
 		});
@@ -229,9 +229,9 @@ describe("session-end hook", () => {
 		it("normalizes SSH git@ remote URL (VAL-PLUGIN-004)", async () => {
 			const gitDir = join(tmpDir, "ssh-repo");
 			const { execSync } = await import("node:child_process");
-			execSync(
-				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin git@github.com:divkix/my-app.git`,
-			);
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin git@github.com:divkix/my-app.git", { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("github.com/divkix/my-app");
 		});
@@ -239,9 +239,9 @@ describe("session-end hook", () => {
 		it("normalizes protocol-prefixed SSH remote URL consistently", async () => {
 			const gitDir = join(tmpDir, "ssh-proto-repo");
 			const { execSync } = await import("node:child_process");
-			execSync(
-				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin ssh://git@github.com/divkix/my-app.git`,
-			);
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin ssh://git@github.com/divkix/my-app.git", { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("github.com/divkix/my-app");
 		});
@@ -249,9 +249,9 @@ describe("session-end hook", () => {
 		it("strips .git suffix from remote URL", async () => {
 			const gitDir = join(tmpDir, "with-git");
 			const { execSync } = await import("node:child_process");
-			execSync(
-				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin https://github.com/divkix/my-app.git`,
-			);
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/my-app.git", { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).not.toContain(".git");
 			expect(id).toBe("github.com/divkix/my-app");
@@ -260,9 +260,9 @@ describe("session-end hook", () => {
 		it("normalizes mixed-case git remote casing (VAL-PLUGIN-104)", async () => {
 			const gitDir = join(tmpDir, "mixed-case");
 			const { execSync } = await import("node:child_process");
-			execSync(
-				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin https://GITHUB.COM/Divkix/My-App.git`,
-			);
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://GITHUB.COM/Divkix/My-App.git", { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			// Should be consistently cased (all lower)
 			expect(id).toBe(id.toLowerCase());
@@ -629,9 +629,9 @@ describe("session-end hook", () => {
 		it("derives project_name from project_id for git remote (VAL-PLUGIN-018)", async () => {
 			const gitDir = join(tmpDir, "git-repo");
 			const { execSync } = await import("node:child_process");
-			execSync(
-				`mkdir -p ${gitDir} && cd ${gitDir} && git init && git remote add origin https://github.com/divkix/my-app.git`,
-			);
+			mkdirSync(gitDir, { recursive: true });
+			execSync("git init", { cwd: gitDir });
+			execSync("git remote add origin https://github.com/divkix/my-app.git", { cwd: gitDir });
 			const stdin = makeStdin({ cwd: gitDir, transcript_path: join(gitDir, "test.jsonl") });
 			writeFileSync(
 				join(gitDir, "test.jsonl"),
@@ -1061,7 +1061,7 @@ describe("session-end hook", () => {
 			const scriptPath = resolve(tmpDir, "helper.mjs");
 			writeFileSync(
 				scriptPath,
-				`import { writeProjectMapping } from "${modulePath.replace(/\\/g, "\\\\")}";\n` +
+				`import { writeProjectMapping } from "${pathToFileURL(modulePath).href}";\n` +
 					`import { resolve } from "node:path";\n` +
 					`const i = process.argv[2];\n` +
 					`const home = process.env.DIVMEMORY_HOME;\n` +

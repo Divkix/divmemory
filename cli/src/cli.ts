@@ -3,6 +3,7 @@
 import { readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
 	divmemoryHome,
@@ -246,7 +247,7 @@ export function decodeProjectDir(encoded: string): string | null {
 	// Consult central mapping for deleted worktrees with literal dashes
 	const keys = getAllMappingKeys();
 	for (const key of keys) {
-		const winMatch = key.match(/^[A-Za-z]:\//);
+		const winMatch = key.match(/^[A-Za-z]:[/\\]/);
 		if (key.startsWith("/")) {
 			const stripped = key.slice(1);
 			const encodedKey = stripped.replace(/\//g, "-");
@@ -659,7 +660,12 @@ async function main() {
 	const dir = flags.dir || "~/.factory/sessions/";
 	const limit = flags.limit ?? DEFAULT_LIMIT;
 	const dryRun = flags.dryRun ?? false;
-	const workerUrl = flags.worker || process.env.DIVMEMORY_WORKER_URL || DEFAULT_WORKER_URL;
+	const envWorkerUrl = process.env.DIVMEMORY_WORKER_URL;
+	const workerUrl =
+		flags.worker ||
+		(envWorkerUrl && envWorkerUrl !== "undefined" && envWorkerUrl !== "null"
+			? envWorkerUrl
+			: DEFAULT_WORKER_URL);
 
 	let apiKey: string | undefined;
 	try {
@@ -775,6 +781,9 @@ async function main() {
 	process.exit(exitCode);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (
+	import.meta.url === `file://${process.argv[1]}` ||
+	fileURLToPath(import.meta.url) === resolve(process.argv[1])
+) {
 	main();
 }
