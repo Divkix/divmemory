@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_WORKER_URL, resolveWorkerUrl } from "../scripts/config.mjs";
+import { DEFAULT_WORKER_URL, resolveWorkerUrl } from "./config.mjs";
 
 describe("resolveWorkerUrl", () => {
 	it("falls back for unset and blank values", () => {

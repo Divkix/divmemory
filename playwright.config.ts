@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:8787";
+const basePort = new URL(baseURL).port || "8787";
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -21,7 +22,7 @@ export default defineConfig({
 		{ name: "mobile", use: { ...devices["Pixel 5"], viewport: { width: 390, height: 844 } } },
 	],
 	webServer: {
-		command: "cd worker && bun wrangler dev --config wrangler.e2e.jsonc --port 8787",
+		command: `cd worker && bun wrangler dev --config wrangler.e2e.jsonc --port ${basePort}`,
 		url: `${baseURL}/health`,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,

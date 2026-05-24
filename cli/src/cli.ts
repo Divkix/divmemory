@@ -615,7 +615,7 @@ async function main() {
 	const dir = flags.dir || "~/.factory/sessions/";
 	const limit = flags.limit ?? DEFAULT_LIMIT;
 	const dryRun = flags.dryRun ?? false;
-	const workerUrl = flags.worker || resolveWorkerUrl();
+	const workerUrl = resolveWorkerUrl(flags.worker);
 
 	let apiKey: string | undefined;
 	try {
