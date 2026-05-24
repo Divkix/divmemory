@@ -29,10 +29,12 @@ export function mappingsPath(home) {
 
 export function encodePath(absolutePath) {
 	// Normalize backslashes to forward slashes
-	let path = absolutePath.replace(/\\/g, "/");
-	// Strip Windows drive-letter prefix (C:/... → /...)
+	const path = absolutePath.replace(/\\/g, "/");
+	// Preserve Windows drive-letter prefix with a marker for lossless round-trip
 	if (/^[A-Za-z]:\//.test(path)) {
-		path = path.slice(2);
+		const drive = path[0].toLowerCase();
+		const rest = path.slice(3);
+		return `-__drive_${drive}-${rest.replace(/\//g, "-")}`;
 	}
 	return `-${path.slice(1).replace(/\//g, "-")}`;
 }

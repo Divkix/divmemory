@@ -2,11 +2,10 @@
 set -eu
 cd "$(dirname "$0")/../worker"
 
-BACKUP_CREATED=false
 ORIGINAL_EXISTS=false
 
 cleanup() {
-	if [ "$BACKUP_CREATED" = true ]; then
+	if [ -f .dev.vars.bak ]; then
 		mv .dev.vars.bak .dev.vars
 	elif [ "$ORIGINAL_EXISTS" = false ]; then
 		rm -f .dev.vars
@@ -18,7 +17,6 @@ trap cleanup EXIT INT TERM
 if [ -f .dev.vars ]; then
 	ORIGINAL_EXISTS=true
 	mv .dev.vars .dev.vars.bak
-	BACKUP_CREATED=true
 fi
 
 cat > .dev.vars <<'EOF'

@@ -195,7 +195,8 @@ function getDecodeCacheKey(encoded: string): string {
 export function decodeProjectDir(encoded: string): string | null {
 	// Unix-oriented: encoded Factory session dirs replace "/" with "-" (e.g.
 	// /Users/div/projects/my-app -> -Users-div-projects-my-app). Keys must start
-	// with "-"; Windows drive-letter paths are not encoded/decoded here.
+	// with "-"; Windows drive-letter paths are encoded with a __drive_<letter>
+	// marker (e.g. C:\foo\bar -> -__drive_c-foo-bar).
 	if (!encoded.startsWith("-")) return null;
 
 	const cacheKey = getDecodeCacheKey(encoded);
@@ -203,7 +204,19 @@ export function decodeProjectDir(encoded: string): string | null {
 		return decodeCache.get(cacheKey) ?? null;
 	}
 
-	const rest = encoded.slice(1);
+	let windowsDrive: string | null = null;
+	let rest = encoded.slice(1);
+
+	// Detect Windows drive marker from encodePath (e.g. -__drive_c-Users-me-app)
+	if (rest.startsWith("__drive_")) {
+		windowsDrive = rest[8]?.toLowerCase() ?? null;
+		if (windowsDrive && rest.length > 9 && rest[9] === "-") {
+			rest = rest.slice(10);
+		} else if (windowsDrive) {
+			rest = rest.slice(9);
+		}
+	}
+
 	const dashPositions: number[] = [];
 	for (let i = 0; i < rest.length; i++) {
 		if (rest[i] === "-") dashPositions.push(i);
@@ -219,7 +232,9 @@ export function decodeProjectDir(encoded: string): string | null {
 	segments.push(rest.slice(lastPos));
 
 	// Try to resolve by checking filesystem (handles paths with literal dashes)
-	const resolved = resolveDecodedPath(segments);
+	const resolved = windowsDrive
+		? resolveDecodedPath(segments, windowsDrive)
+		: resolveDecodedPath(segments);
 	if (resolved) {
 		decodeCache.set(cacheKey, resolved);
 		return resolved;
@@ -228,6 +243,7 @@ export function decodeProjectDir(encoded: string): string | null {
 	// Consult central mapping for deleted worktrees with literal dashes
 	const keys = getAllMappingKeys();
 	for (const key of keys) {
+		const winMatch = key.match(/^[A-Za-z]:\//);
 		if (key.startsWith("/")) {
 			const stripped = key.slice(1);
 			const encodedKey = stripped.replace(/\//g, "-");
@@ -235,10 +251,21 @@ export function decodeProjectDir(encoded: string): string | null {
 				decodeCache.set(cacheKey, key);
 				return key;
 			}
+		} else if (winMatch && windowsDrive) {
+			const driveLetter = winMatch[0][0].toLowerCase();
+			const stripped = key.slice(3);
+			const encodedKey = stripped.replace(/\//g, "-");
+			if (driveLetter === windowsDrive && encodedKey === rest) {
+				decodeCache.set(cacheKey, key);
+				return key;
+			}
 		}
 	}
 
 	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
+	if (windowsDrive) {
+		return `${windowsDrive.toUpperCase()}:${rest.length > 0 ? `/${rest.replace(/-/g, "/")}` : "/"}`;
+	}
 	return `/${rest.replace(/-/g, "/")}`;
 }
 
@@ -255,14 +282,18 @@ export function decodeProjectDir(encoded: string): string | null {
  *
  * Returns the first fully-existing path found, or null if none exist.
  */
-export function resolveDecodedPath(segments: string[]): string | null {
+export function resolveDecodedPath(
+	segments: string[],
+	windowsDrive?: string | null,
+): string | null {
 	interface Candidate {
 		path: string;
 		exists: boolean;
 		lastExistingDir: string;
 	}
 
-	const firstPath = `/${segments[0]}`;
+	const rootPrefix = windowsDrive ? `${windowsDrive.toUpperCase()}:` : "";
+	const firstPath = `${rootPrefix}/${segments[0]}`;
 	let firstExists = false;
 	try {
 		firstExists = statSync(firstPath).isDirectory();
@@ -272,7 +303,7 @@ export function resolveDecodedPath(segments: string[]): string | null {
 		{
 			path: firstPath,
 			exists: firstExists,
-			lastExistingDir: firstExists ? firstPath : "/",
+			lastExistingDir: firstExists ? firstPath : `${rootPrefix}/`,
 		},
 	];
 
