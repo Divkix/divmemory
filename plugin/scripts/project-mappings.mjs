@@ -216,7 +216,10 @@ export function localProjectId(absolutePath) {
 export async function resolveProjectId(cwd, options = {}) {
 	const absolutePath = resolve(cwd || process.cwd());
 	if (!existsSync(absolutePath)) {
-		const mapped = lookupProjectMapping(absolutePath, options);
+		let mapped = lookupProjectMapping(absolutePath, options);
+		if (typeof mapped !== "string" && cwd && cwd !== absolutePath) {
+			mapped = lookupProjectMapping(cwd, options);
+		}
 		if (typeof mapped === "string") return mapped;
 		return localProjectId(absolutePath);
 	}

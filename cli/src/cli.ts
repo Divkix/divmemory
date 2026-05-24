@@ -257,9 +257,11 @@ export function decodeProjectDir(encoded: string): string | null {
 			}
 		} else if (winMatch && windowsDrive) {
 			const driveLetter = winMatch[0][0].toLowerCase();
-			const stripped = key.slice(3);
-			const encodedKey = stripped.replace(/\//g, "-");
-			if (driveLetter === windowsDrive && encodedKey === rest) {
+			const stripped = key
+				.slice(3)
+				.replace(/^[/\\]/, "")
+				.replace(/[/\\]/g, "-");
+			if (driveLetter === windowsDrive && stripped === rest) {
 				decodeCache.set(cacheKey, key);
 				return key;
 			}
