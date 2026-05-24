@@ -258,7 +258,7 @@ describe("bootstrap cli", () => {
 			const f2 = join(tmpDir, "bbb.jsonl");
 			writeFileSync(f1, "a\n");
 			writeFileSync(f2, "b\n");
-			const now = Date.now();
+			const now = Math.floor(Date.now() / 1000);
 			const { utimesSync } = await import("node:fs");
 			utimesSync(f1, now, now);
 			utimesSync(f2, now, now);
@@ -603,7 +603,8 @@ describe("bootstrap cli", () => {
 			const mod = await loadCliModule();
 			const { expandTilde } = mod;
 			if (!expandTilde) return;
-			expect(expandTilde("/tmp/sessions")).toBe("/tmp/sessions");
+			const input = "/tmp/sessions";
+			expect(expandTilde(input)).toBe(resolve(input));
 		});
 
 		it("resolves relative paths to absolute", async () => {

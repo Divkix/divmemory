@@ -324,7 +324,7 @@ export function resolveDecodedPath(segments: string[]): string | null {
 	// Check if any candidate of the full path exists as a directory
 	for (const cand of candidates) {
 		if (cand.exists) {
-			return cand.path;
+			return resolve(cand.path);
 		}
 	}
 

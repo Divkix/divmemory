@@ -3,25 +3,28 @@ set -eu
 cd "$(dirname "$0")/../worker"
 
 BACKUP_CREATED=false
-if [ -f .dev.vars ]; then
-	mv .dev.vars .dev.vars.bak
-	BACKUP_CREATED=true
-fi
+ORIGINAL_EXISTS=false
 
 cleanup() {
 	if [ "$BACKUP_CREATED" = true ]; then
 		mv .dev.vars.bak .dev.vars
-	else
+	elif [ "$ORIGINAL_EXISTS" = false ]; then
 		rm -f .dev.vars
 	fi
 }
 
 trap cleanup EXIT INT TERM
 
+if [ -f .dev.vars ]; then
+	ORIGINAL_EXISTS=true
+	mv .dev.vars .dev.vars.bak
+	BACKUP_CREATED=true
+fi
+
 cat > .dev.vars <<'EOF'
-DIVMEMORY_API_KEY=e2e-api-key
-DIVMEMORY_WEB_PASSWORD=e2e-test-password
-COOKIE_SECRET=e2e-test-cookie-secret
+DIVMEMORY_API_KEY=***********
+DIVMEMORY_WEB_PASSWORD=*****************
+COOKIE_SECRET=**********************
 EOF
 
 wrangler dev --port 8787

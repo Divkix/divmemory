@@ -28,7 +28,13 @@ export function mappingsPath(home) {
 }
 
 export function encodePath(absolutePath) {
-	return `-${absolutePath.slice(1).replace(/\//g, "-")}`;
+	// Normalize backslashes to forward slashes
+	let path = absolutePath.replace(/\\/g, "/");
+	// Strip Windows drive-letter prefix (C:/... → /...)
+	if (/^[A-Za-z]:\//.test(path)) {
+		path = path.slice(2);
+	}
+	return `-${path.slice(1).replace(/\//g, "-")}`;
 }
 
 function mappingLockPath(home) {
