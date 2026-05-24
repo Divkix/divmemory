@@ -15,8 +15,12 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ -f .dev.vars ]; then
-	ORIGINAL_EXISTS=true
+	# Preserve any existing backup to avoid accidental overwrites
+	if [ -f .dev.vars.bak ]; then
+		mv .dev.vars.bak ".dev.vars.bak.$$"
+	fi
 	mv .dev.vars .dev.vars.bak
+	ORIGINAL_EXISTS=true
 fi
 
 cat > .dev.vars <<'EOF'

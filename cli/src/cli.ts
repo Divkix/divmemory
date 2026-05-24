@@ -209,11 +209,14 @@ export function decodeProjectDir(encoded: string): string | null {
 
 	// Detect Windows drive marker from encodePath (e.g. -__drive_c-Users-me-app)
 	if (rest.startsWith("__drive_")) {
-		windowsDrive = rest[8]?.toLowerCase() ?? null;
-		if (windowsDrive && rest.length > 9 && rest[9] === "-") {
-			rest = rest.slice(10);
-		} else if (windowsDrive) {
-			rest = rest.slice(9);
+		const candidate = rest[8];
+		if (candidate && /^[A-Za-z]$/.test(candidate)) {
+			windowsDrive = candidate.toLowerCase();
+			if (rest.length > 9 && rest[9] === "-") {
+				rest = rest.slice(10);
+			} else {
+				rest = rest.slice(9);
+			}
 		}
 	}
 
