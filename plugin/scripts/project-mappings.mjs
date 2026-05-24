@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const LOCK_RETRIES = 20;
 const LOCK_BASE_DELAY_MS = 25;
@@ -37,6 +37,11 @@ export function encodePath(absolutePath) {
 		return `-__drive_${drive}-${rest.replace(/\//g, "-")}`;
 	}
 	return `-${path.slice(1).replace(/\//g, "-")}`;
+}
+
+function isAbsoluteOrEncodedPath(pathValue) {
+	if (isAbsolute(pathValue) || /^[A-Za-z]:[\\/]/.test(pathValue)) return true;
+	return /^-(?:__drive_[a-z]-)?[^/\\]+$/.test(pathValue);
 }
 
 function mappingLockPath(home) {
@@ -126,7 +131,7 @@ export function lookupProjectMapping(absolutePath, options = {}) {
 			return null;
 		}
 		let mapped = mappings[absolutePath];
-		if (typeof mapped !== "string") {
+		if (typeof mapped !== "string" && isAbsoluteOrEncodedPath(absolutePath)) {
 			const encodedKey = encodePath(absolutePath);
 			mapped = mappings[encodedKey];
 		}

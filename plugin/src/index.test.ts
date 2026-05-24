@@ -1,5 +1,13 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { encodePath, normalizeGitRemote } from "../scripts/project-mappings.mjs";
+import {
+	encodePath,
+	lookupProjectMapping,
+	mappingsPath,
+	normalizeGitRemote,
+} from "../scripts/project-mappings.mjs";
 
 describe("encodePath", () => {
 	it("should encode an absolute path to the dash-prefixed format", () => {
@@ -14,6 +22,31 @@ describe("encodePath", () => {
 
 	it("should handle root-level paths", () => {
 		expect(encodePath("/home/user")).toBe("-home-user");
+	});
+});
+
+describe("lookupProjectMapping", () => {
+	it("does not encode relative paths for fallback lookups", () => {
+		const home = mkdtempSync(join(tmpdir(), "divmemory-mapping-"));
+		writeFileSync(
+			mappingsPath(home),
+			JSON.stringify({ [encodePath("relative/project")]: "github.com/wrong/project" }),
+			"utf-8",
+		);
+
+		expect(lookupProjectMapping("relative/project", { home })).toBeNull();
+	});
+
+	it("uses encoded fallback lookups for absolute paths", () => {
+		const home = mkdtempSync(join(tmpdir(), "divmemory-mapping-"));
+		const absolutePath = "/Users/div/projects/my-app";
+		writeFileSync(
+			mappingsPath(home),
+			JSON.stringify({ [encodePath(absolutePath)]: "github.com/div/my-app" }),
+			"utf-8",
+		);
+
+		expect(lookupProjectMapping(absolutePath, { home })).toBe("github.com/div/my-app");
 	});
 });
 

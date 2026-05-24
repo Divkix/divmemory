@@ -28,10 +28,14 @@ if [ -f .dev.vars ]; then
 	mv .dev.vars .dev.vars.bak
 fi
 
-cat > .dev.vars <<'EOF'
-DIVMEMORY_API_KEY=***********
-DIVMEMORY_WEB_PASSWORD=*****************
-COOKIE_SECRET=**********************
-EOF
+: "${DIVMEMORY_API_KEY:=e2e-api-key}"
+: "${DIVMEMORY_WEB_PASSWORD:=e2e-test-password}"
+: "${COOKIE_SECRET:=e2e-test-cookie-secret}"
 
-wrangler dev --port 8787
+{
+	printf 'DIVMEMORY_API_KEY=%s\n' "$DIVMEMORY_API_KEY"
+	printf 'DIVMEMORY_WEB_PASSWORD=%s\n' "$DIVMEMORY_WEB_PASSWORD"
+	printf 'COOKIE_SECRET=%s\n' "$COOKIE_SECRET"
+} > .dev.vars
+
+bun wrangler dev --port 8787
