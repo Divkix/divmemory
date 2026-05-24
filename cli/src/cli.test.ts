@@ -17,9 +17,26 @@ async function loadCliModule() {
 	return import("./cli");
 }
 
-/** Mirrors segment splitting in decodeProjectDir for BFS tests. */
-function segmentsFromEncoded(encoded: string): string[] {
-	const rest = encoded.slice(1);
+/** Mirrors segment splitting and driver-letter extraction from decodeProjectDir for BFS tests. */
+function segmentsFromEncoded(encoded: string): {
+	segments: string[];
+	windowsDrive: string | null;
+} {
+	let rest = encoded.slice(1);
+	let windowsDrive: string | null = null;
+
+	if (rest.startsWith("__drive_")) {
+		const candidate = rest[8];
+		if (candidate && /^[A-Za-z]$/.test(candidate)) {
+			windowsDrive = candidate.toLowerCase();
+			if (rest.length > 9 && rest[9] === "-") {
+				rest = rest.slice(10);
+			} else {
+				rest = rest.slice(9);
+			}
+		}
+	}
+
 	const dashPositions: number[] = [];
 	for (let i = 0; i < rest.length; i++) {
 		if (rest[i] === "-") dashPositions.push(i);
@@ -31,7 +48,7 @@ function segmentsFromEncoded(encoded: string): string[] {
 		lastPos = pos + 1;
 	}
 	segments.push(rest.slice(lastPos));
-	return segments;
+	return { segments, windowsDrive };
 }
 
 describe("bootstrap cli", () => {
@@ -258,7 +275,7 @@ describe("bootstrap cli", () => {
 			const f2 = join(tmpDir, "bbb.jsonl");
 			writeFileSync(f1, "a\n");
 			writeFileSync(f2, "b\n");
-			const now = Date.now();
+			const now = Math.floor(Date.now() / 1000);
 			const { utimesSync } = await import("node:fs");
 			utimesSync(f1, now, now);
 			utimesSync(f2, now, now);
@@ -570,7 +587,8 @@ describe("bootstrap cli", () => {
 			const gitDir = join(tmpDir, "ssh-proto-repo");
 			mkdirSync(gitDir);
 			execSync("git init", { cwd: gitDir });
-			execSync("git remote add origin ssh://git@github.com/divkix/my-app.git", { cwd: gitDir });
+			const remoteCmd = "git remote add origin ssh://git@github.com/divkix/my-app.git";
+			execSync(remoteCmd, { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("github.com/divkix/my-app");
 		});
@@ -603,7 +621,8 @@ describe("bootstrap cli", () => {
 			const mod = await loadCliModule();
 			const { expandTilde } = mod;
 			if (!expandTilde) return;
-			expect(expandTilde("/tmp/sessions")).toBe("/tmp/sessions");
+			const input = "/tmp/sessions";
+			expect(expandTilde(input)).toBe(resolve(input));
 		});
 
 		it("resolves relative paths to absolute", async () => {
@@ -613,6 +632,23 @@ describe("bootstrap cli", () => {
 			const result = expandTilde("./sessions");
 			expect(result.startsWith(process.cwd())).toBe(true);
 			expect(result).not.toContain("./sessions");
+		});
+
+		it("expands bare ~ to homedir", async () => {
+			const mod = await loadCliModule();
+			const { expandTilde } = mod;
+			if (!expandTilde) return;
+			const { homedir } = await import("node:os");
+			expect(expandTilde("~")).toBe(homedir());
+		});
+
+		it("leaves Windows absolute paths unchanged", async () => {
+			if (process.platform !== "win32") return;
+			const mod = await loadCliModule();
+			const { expandTilde } = mod;
+			if (!expandTilde) return;
+			const winPath = "C:\\Users\\me\\sessions";
+			expect(expandTilde(winPath)).toBe(winPath);
 		});
 	});
 
@@ -626,6 +662,22 @@ describe("bootstrap cli", () => {
 			expect(decoded).toContain("Users");
 			expect(decoded).toContain("myapp");
 		});
+
+		it("returns null for keys without leading dash (Unix encoding)", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir } = mod;
+			if (!decodeProjectDir) return;
+			expect(decodeProjectDir("Users-div-projects")).toBeNull();
+			expect(decodeProjectDir("C:\\Users\\me")).toBeNull();
+		});
+
+		it("does not decode Windows drive-letter paths from backslash-containing keys", async () => {
+			const mod = await loadCliModule();
+			const { decodeProjectDir } = mod;
+			if (!decodeProjectDir) return;
+			const decoded = decodeProjectDir("-C:\\Users\\me");
+			expect(decoded === null || decoded !== "C:\\Users\\me").toBe(true);
+		});
 	});
 
 	describe("resolveDecodedPath BFS disambiguation", () => {
@@ -638,8 +690,8 @@ describe("bootstrap cli", () => {
 			mkdirSync(target, { recursive: true });
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
-			const segments = segmentsFromEncoded(encodePath(target));
-			expect(resolveDecodedPath(segments)).toBe(resolve(target));
+			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(target));
+			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(target));
 		});
 
 		it("prefers slash-expanded path when multiple terminal candidates exist", async () => {
@@ -652,9 +704,9 @@ describe("bootstrap cli", () => {
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
 			const ambiguousTarget = join(tmpDir, "a-b");
-			const segments = segmentsFromEncoded(encodePath(ambiguousTarget));
+			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(ambiguousTarget));
 			// BFS pushes slash joins before dash joins; /.../a/b is listed before /.../a-b
-			expect(resolveDecodedPath(segments)).toBe(resolve(join(tmpDir, "a", "b")));
+			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(join(tmpDir, "a", "b")));
 		});
 
 		it("resolves a single-segment path to the existing directory", async () => {
@@ -663,16 +715,16 @@ describe("bootstrap cli", () => {
 			expect(resolveDecodedPath).toBeDefined();
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
-			const segments = segmentsFromEncoded(encodePath(tmpDir));
-			expect(resolveDecodedPath(segments)).toBe(resolve(tmpDir));
+			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(tmpDir));
+			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(tmpDir));
 		});
 
-		it("resolves root-equivalent single empty segment to /", async () => {
+		it("resolves root-equivalent single empty segment to system root", async () => {
 			const mod = await loadCliModule();
 			const { resolveDecodedPath } = mod;
 			expect(resolveDecodedPath).toBeDefined();
 
-			expect(resolveDecodedPath([""])).toBe("/");
+			expect(resolveDecodedPath([""])).toBe(resolve("/"));
 		});
 
 		it("returns null when no matching directory exists on disk", async () => {
@@ -682,8 +734,8 @@ describe("bootstrap cli", () => {
 
 			const missing = join(tmpDir, "does-not-exist");
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
-			const segments = segmentsFromEncoded(encodePath(missing));
-			expect(resolveDecodedPath(segments)).toBeNull();
+			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(missing));
+			expect(resolveDecodedPath(segments, windowsDrive)).toBeNull();
 		});
 
 		it("matches decodeProjectDir for a literal-dash fixture", async () => {
@@ -697,8 +749,8 @@ describe("bootstrap cli", () => {
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
 			const encoded = encodePath(target);
-			const segments = segmentsFromEncoded(encoded);
-			expect(resolveDecodedPath(segments)).toBe(target);
+			const { segments, windowsDrive } = segmentsFromEncoded(encoded);
+			expect(resolveDecodedPath(segments, windowsDrive)).toBe(target);
 			expect(decodeProjectDir(encoded)).toBe(target);
 		});
 
@@ -712,8 +764,8 @@ describe("bootstrap cli", () => {
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
 			const encoded = encodePath(target);
-			const segments = segmentsFromEncoded(encoded);
-			expect(resolveDecodedPath(segments)).toBe(resolve(target));
+			const { segments, windowsDrive } = segmentsFromEncoded(encoded);
+			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(target));
 		});
 	});
 
@@ -1655,7 +1707,8 @@ describe("bootstrap cli", () => {
 			const gitDir = join(tmpDir, "port-repo");
 			mkdirSync(gitDir);
 			execSync("git init", { cwd: gitDir });
-			execSync("git remote add origin https://git.example.com:8443/org/repo.git", { cwd: gitDir });
+			const remoteCmd = "git remote add origin https://git.example.com:8443/org/repo.git";
+			execSync(remoteCmd, { cwd: gitDir });
 			const id = await getProjectId(gitDir);
 			expect(id).toBe("git.example.com:8443/org/repo");
 		});
@@ -1825,7 +1878,8 @@ describe("bootstrap cli", () => {
 				mkdirSync(gitDir, { recursive: true });
 				const { execSync } = await import("node:child_process");
 				execSync("git init", { cwd: gitDir });
-				execSync("git remote add origin https://github.com/cloudflare/vinext.git", { cwd: gitDir });
+				const remoteCmd = "git remote add origin https://github.com/cloudflare/vinext.git";
+				execSync(remoteCmd, { cwd: gitDir });
 				const transcript = join(gitDir, "sess.jsonl");
 				writeFileSync(
 					transcript,

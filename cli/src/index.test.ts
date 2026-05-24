@@ -1,12 +1,31 @@
-import { describe, expect, it } from "vitest";
-import { workerUrl } from "./index";
+import { afterEach, describe, expect, it } from "vitest";
 
-// Temporary tests for worker URL propagation
-// Real CLI tests will be added by feature bootstrap-cli
-describe("cli worker url", () => {
-	it("exports a workerUrl default", () => {
-		expect(typeof workerUrl).toBe("string");
-		expect(workerUrl.length).toBeGreaterThan(0);
-		expect(workerUrl).toContain("divmemory");
+const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
+const originalWorkerUrl = process.env.DIVMEMORY_WORKER_URL;
+
+async function loadWorkerUrl() {
+	const mod = await import(`./index.ts?case=${crypto.randomUUID()}`);
+	return mod.workerUrl as string;
+}
+
+afterEach(() => {
+	if (originalWorkerUrl === undefined) {
+		delete process.env.DIVMEMORY_WORKER_URL;
+	} else {
+		process.env.DIVMEMORY_WORKER_URL = originalWorkerUrl;
+	}
+});
+
+describe("workerUrl", () => {
+	it("falls back for whitespace-only DIVMEMORY_WORKER_URL", async () => {
+		process.env.DIVMEMORY_WORKER_URL = " \t\n ";
+
+		await expect(loadWorkerUrl()).resolves.toBe(DEFAULT_WORKER_URL);
+	});
+
+	it("trims configured DIVMEMORY_WORKER_URL", async () => {
+		process.env.DIVMEMORY_WORKER_URL = " https://custom.example.com ";
+
+		await expect(loadWorkerUrl()).resolves.toBe("https://custom.example.com");
 	});
 });

@@ -1,0 +1,10 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"types": ["@cloudflare/workers-types/experimental", "@cloudflare/vitest-pool-workers"],
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"noEmit": true
+	},
+	"include": ["./**/*.ts", "./env.d.ts"]
+}

@@ -152,7 +152,9 @@ async function scheduled(
 }
 
 export default {
-	fetch: app.fetch,
+	fetch(request: Request, env: unknown, ctx: ExecutionContext) {
+		return app.fetch(request, env, ctx);
+	},
 	scheduled,
 	queue: async (
 		batch: MessageBatch<QueueMessage>,

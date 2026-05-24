@@ -11,6 +11,8 @@
 		"build": "tsc --noEmit",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
+		"test:cf": "vitest run --config vitest.cloudflare.config.ts",
+		"test:all": "vitest run && vitest run --config vitest.cloudflare.config.ts",
 		"lint": "biome check ."
 	},
 	"dependencies": {
@@ -19,8 +21,10 @@
 		"zod": "^3.24.3"
 	},
 	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.13.0",
 		"@cloudflare/workers-types": "^4.20250410.0",
 		"drizzle-kit": "^0.31.0",
+		"fast-check": "^4.8.0",
 		"typescript": "^6.0.3",
 		"vitest": "^4.1.6",
 		"wrangler": "^4.92.0"

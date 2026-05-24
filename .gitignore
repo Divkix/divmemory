@@ -5,8 +5,12 @@ build
 .env
 .env.local
 .dev.vars
+.dev.vars.bak
+.dev.vars.*
 .wrangler
 *.tsbuildinfo
 coverage
+test-results
+playwright-report
 .DS_Store
 .antigravitycli/

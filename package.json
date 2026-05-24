@@ -13,11 +13,13 @@
 		"typecheck": "bun run --filter '*' typecheck",
 		"build": "bun run --filter '*' build",
 		"test": "bun test",
+		"test:e2e": "playwright test",
 		"lint": "biome check .",
 		"format": "biome check --write ."
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.15",
+		"@playwright/test": "^1.60.0",
 		"@types/node": "^25.9.0",
 		"drizzle-orm": "^0.45.2",
 		"hono": "^4.12.21",

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const LOCK_RETRIES = 20;
 const LOCK_BASE_DELAY_MS = 25;
@@ -28,7 +28,20 @@ export function mappingsPath(home) {
 }
 
 export function encodePath(absolutePath) {
-	return `-${absolutePath.slice(1).replace(/\//g, "-")}`;
+	// Normalize backslashes to forward slashes
+	const path = absolutePath.replace(/\\/g, "/");
+	// Preserve Windows drive-letter prefix with a marker for lossless round-trip
+	if (/^[A-Za-z]:\//.test(path)) {
+		const drive = path[0].toLowerCase();
+		const rest = path.slice(3);
+		return `-__drive_${drive}-${rest.replace(/\//g, "-")}`;
+	}
+	return `-${path.slice(1).replace(/\//g, "-")}`;
+}
+
+function isAbsoluteOrEncodedPath(pathValue) {
+	if (isAbsolute(pathValue) || /^[A-Za-z]:[\\/]/.test(pathValue)) return true;
+	return /^-(?:__drive_[a-z]-)?[^/\\]+$/.test(pathValue);
 }
 
 function mappingLockPath(home) {
@@ -118,7 +131,7 @@ export function lookupProjectMapping(absolutePath, options = {}) {
 			return null;
 		}
 		let mapped = mappings[absolutePath];
-		if (typeof mapped !== "string" && absolutePath.startsWith("/")) {
+		if (typeof mapped !== "string" && isAbsoluteOrEncodedPath(absolutePath)) {
 			const encodedKey = encodePath(absolutePath);
 			mapped = mappings[encodedKey];
 		}
@@ -208,7 +221,10 @@ export function localProjectId(absolutePath) {
 export async function resolveProjectId(cwd, options = {}) {
 	const absolutePath = resolve(cwd || process.cwd());
 	if (!existsSync(absolutePath)) {
-		const mapped = lookupProjectMapping(absolutePath, options);
+		let mapped = lookupProjectMapping(absolutePath, options);
+		if (typeof mapped !== "string" && cwd && cwd !== absolutePath) {
+			mapped = lookupProjectMapping(cwd, options);
+		}
 		if (typeof mapped === "string") return mapped;
 		return localProjectId(absolutePath);
 	}

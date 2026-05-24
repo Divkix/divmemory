@@ -181,7 +181,11 @@ export async function processSessionEnd(stdinData, deps = {}) {
 	const stderr = deps.stderr || ((s) => process.stderr.write(`${s}\n`));
 	const fetch_ = deps.fetch || ((...args) => fetch(...args));
 
-	const WORKER_URL = process.env.DIVMEMORY_WORKER_URL || DEFAULT_WORKER_URL;
+	const envWorkerUrl = process.env.DIVMEMORY_WORKER_URL;
+	const WORKER_URL =
+		envWorkerUrl && envWorkerUrl !== "undefined" && envWorkerUrl !== "null"
+			? envWorkerUrl
+			: DEFAULT_WORKER_URL;
 	const API_KEY = process.env.DIVMEMORY_API_KEY;
 
 	if (!stdinData?.trim()) {
