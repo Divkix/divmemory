@@ -1,0 +1,46 @@
+---
+title: Testing
+description: Run tests across all workspaces.
+---
+
+All tests use [Vitest](https://vitest.dev).
+
+## Run all tests
+
+```bash
+bun test            # All unit tests
+bun test --watch    # Watch mode
+```
+
+## Test coverage
+
+- **Worker routes**: ingest, context, consolidate, memories, web UI — mocked Firepass, in-memory D1
+- **Plugin hooks**: SessionEnd conversation extraction, SessionStart context injection
+- **CLI**: JSONL parsing, batch logic, error handling
+- **Auth**: API key, cookie, CSRF
+- **Schema**: Drizzle models, constraints, indexes
+
+## Cloudflare integration tests
+
+```bash
+bun run --filter @divmemory/worker test:cf
+```
+
+Uses `@cloudflare/vitest-pool-workers` to test against a real local D1 binding.
+
+## End-to-end tests
+
+```bash
+# Requires a running dev server
+bun run test:e2e
+```
+
+Playwright tests in `e2e/` with desktop and mobile projects.
+
+## Per-workspace commands
+
+```bash
+bun run --filter @divmemory/worker test
+bun run --filter @divmemory/plugin test
+bun run --filter @divmemory/cli test
+```

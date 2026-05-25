@@ -1,0 +1,39 @@
+---
+title: Bootstrap
+description: Import past sessions in bulk with divmemory-bootstrap.
+---
+
+## Install
+
+The CLI ships as `divmemory-bootstrap` on npm:
+
+```bash
+npx divmemory-bootstrap --help
+```
+
+## Usage
+
+Import up to 50 most recent sessions from `~/.factory/sessions/`:
+
+```bash
+DIVMEMORY_API_KEY="<your token>" \
+DIVMEMORY_WORKER_URL="https://<your-worker>.<subdomain>.workers.dev" \
+npx divmemory-bootstrap --limit 50
+```
+
+## Flags
+
+| Flag | Description |
+| --- | --- |
+| `--dir <path>` | Directory to scan for JSONL files (default: `~/.factory/sessions/`) |
+| `--limit <n>` | Max sessions to process (default: `50`) |
+| `--dry-run` | Print what would be sent without making network requests |
+| `--api-key <key>` | API key (overrides `DIVMEMORY_API_KEY` env var) |
+| `--worker <url>` | Worker base URL (overrides `DIVMEMORY_WORKER_URL` env var) |
+| `--report-mapping-duplicates` | Print path → canonical → local ID mappings (no network) |
+
+## Project ID resolution
+
+Project IDs come from `git remote get-url origin` when available. Local-only folders use a hashed absolute-path slug such as `local-3f91ab4c2d10-my-app`.
+
+The CLI consults `~/.divmemory/project_mappings.json` to resolve deleted worktree paths to their canonical IDs.

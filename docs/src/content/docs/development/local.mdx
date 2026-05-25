@@ -1,0 +1,57 @@
+---
+title: Local Dev
+description: Run the Worker and docs site locally.
+---
+
+## Worker dev server
+
+```bash
+# From repo root — starts on port 8787
+bun run dev
+```
+
+Or from `worker/`:
+
+```bash
+bun run dev   # wrangler dev --port 8787
+```
+
+Set up local secrets:
+
+```bash
+export DIVMEMORY_API_KEY="<same token>"
+export DIVMEMORY_WORKER_URL="http://127.0.0.1:8787"
+```
+
+## Docs site dev server
+
+```bash
+cd docs
+bun run dev
+```
+
+Serves on the default Astro dev port (usually `4321`).
+
+## Apply local migrations
+
+```bash
+cd worker
+npx wrangler d1 migrations apply divmemory-db --local
+```
+
+## First-run smoke test
+
+```bash
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/status"
+
+# Add memory manually
+curl -X POST "$DIVMEMORY_WORKER_URL/memories" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"test","topic":"general","content":"Hello dev."}'
+
+# Read it back
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/context?project=test"
+```

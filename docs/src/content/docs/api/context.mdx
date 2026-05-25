@@ -1,0 +1,46 @@
+---
+title: Context
+description: GET /context — retrieve formatted memory for a project.
+---
+
+Retrieve a formatted markdown memory block for a given project. Called by the SessionStart hook.
+
+## Request
+
+```bash
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/context?project=github.com/divkix/divmemory"
+```
+
+## Query parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `project` | string | required | Project ID |
+| `max_chars` | number | `12000` | Maximum characters in the response body |
+
+## Response
+
+Returns `text/plain; charset=utf-8` with a markdown block:
+
+```
+## divmemory — divmemory
+
+_Last updated 2024-06-10T14:22:01Z_ · _42 facts_
+
+### Project Context
+
+- Uses Cloudflare D1 for persistence.
+
+### Recent Decisions
+
+- Migrated from KV to D1 for relational storage.
+
+### Global Preferences
+
+- Prefer concise implementation notes for this project.
+
+_Project-specific guidelines override global preferences in case of conflict._
+```
+
+The response is balanced across topics with a minimum guarantee of 500 characters per populated topic, plus a global preferences section capped at 25% of the total budget.

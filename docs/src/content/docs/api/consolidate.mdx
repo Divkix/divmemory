@@ -1,0 +1,49 @@
+---
+title: Consolidate
+description: POST /consolidate — merge unconsolidated sessions.
+---
+
+Trigger a consolidation pass. This feeds unconsolidated sessions + existing memories into Firepass to produce a clean, deduplicated fact set.
+
+## Request
+
+```bash
+curl -X POST "$DIVMEMORY_WORKER_URL/consolidate" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"github.com/divkix/divmemory"}'
+```
+
+## Response
+
+```json
+{
+  "ok": true,
+  "consolidated": 3,
+  "archived": 0
+}
+```
+
+If nothing needs consolidation:
+
+```json
+{
+  "ok": true,
+  "message": "Nothing to consolidate",
+  "consolidated": 0,
+  "archived": 0
+}
+```
+
+If consolidation is already in progress (409 conflict):
+
+```json
+{
+  "ok": true,
+  "message": "Consolidation already in progress"
+}
+```
+
+## Auto-consolidation
+
+A cron job runs daily at 3am UTC, automatically consolidating any project with >= 2 unconsolidated sessions. Declared in `worker/wrangler.jsonc`.

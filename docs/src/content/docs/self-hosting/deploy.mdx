@@ -1,0 +1,83 @@
+---
+title: Deploy
+description: Deploy the divmemory Worker to production.
+---
+
+## Deploy the Worker
+
+```bash
+cd worker
+bun run deploy
+```
+
+Wrangler bundles, uploads, and prints the live Worker URL:
+
+```
+https://divmemory.<your-subdomain>.workers.dev
+```
+
+## Verify after deploy
+
+```bash
+export DIVMEMORY_API_KEY="<your token>"
+export DIVMEMORY_WORKER_URL="https://divmemory.<your-subdomain>.workers.dev"
+
+# Health check
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/status"
+
+# Add a manual memory
+curl -X POST "$DIVMEMORY_WORKER_URL/memories" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"smoke-test","topic":"preferences","content":"Smoke test passed."}'
+
+# Read it back
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/context?project=smoke-test"
+```
+
+If all three return JSON (not 401/500), your deployment is live.
+
+## Update a live deployment
+
+```bash
+git pull
+bun install
+cd worker
+bun run deploy
+```
+
+If new SQL migrations were added, apply them before redeploying:
+
+```bash
+npx wrangler d1 migrations apply divmemory-db --remote
+bun run deploy
+```
+
+## Local development
+
+```bash
+# From worker/
+bun run dev   # wrangler dev --port 8787
+```
+
+Set local env vars:
+
+```bash
+export DIVMEMORY_API_KEY="<same token>"
+export DIVMEMORY_WORKER_URL="http://127.0.0.1:8787"
+```
+
+Apply local migrations:
+
+```bash
+npx wrangler d1 migrations apply divmemory-db --local
+```
+
+(Optional) Create local queues:
+
+```bash
+npx wrangler queues create divmemory-ingest
+npx wrangler queues create divmemory-ingest-dlq
+```

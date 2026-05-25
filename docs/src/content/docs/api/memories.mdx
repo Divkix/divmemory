@@ -1,0 +1,60 @@
+---
+title: Memories
+description: GET, POST, PATCH, DELETE /memories.
+---
+
+CRUD and search for memory facts.
+
+## POST /memories — add manual fact
+
+```bash
+curl -X POST "$DIVMEMORY_WORKER_URL/memories" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "github.com/divkix/divmemory",
+    "topic": "decisions",
+    "content": "Curated facts should not be automatically archived."
+  }'
+```
+
+If a similar fact already exists (Jaccard > 0.6), the existing one is upgraded to `curated=1` and deduplicated.
+
+## GET /memories — list/search
+
+```bash
+# List all active memories for a project
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/memories?project=github.com/divkix/divmemory"
+
+# Search by content substring
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/memories?project=github.com/divkix/divmemory&search=database"
+
+# List archived memories
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/memories?project=github.com/divkix/divmemory&status=archived"
+```
+
+Response groups memories by project and topic.
+
+## PATCH /memories/:id — edit
+
+```bash
+curl -X PATCH "$DIVMEMORY_WORKER_URL/memories/<id>" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Updated fact text"}'
+```
+
+Editing a memory automatically sets `curated=1` and `confidence=1.0`.
+
+## DELETE /memories/:id — remove
+
+```bash
+curl -X DELETE "$DIVMEMORY_WORKER_URL/memories/<id>" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY"
+```
+
+- Auto-extracted (`curated=0`) → hard deleted
+- Curated (`curated=1`) → soft-archived (`status=archived`)

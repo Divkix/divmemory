@@ -1,0 +1,22 @@
+---
+title: Overview
+description: All Worker API endpoints.
+---
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/ingest` | Bearer | Submit session transcript for extraction |
+| `GET` | `/context?project=<id>` | Bearer | Get formatted memory block for project |
+| `POST` | `/consolidate` | Bearer | Trigger consolidation pass |
+| `GET` | `/memories?project=<id>` | Bearer/Cookie | List memories (JSON) |
+| `POST` | `/memories` | Bearer/Cookie | Add curated manual memory |
+| `PATCH` | `/memories/:id` | Bearer/Cookie | Edit a memory entry |
+| `DELETE` | `/memories/:id` | Bearer/Cookie | Delete/archive a memory |
+| `GET` | `/status?project=<id>` | Bearer | Get backlog, error, and memory counts |
+| `GET` | `/` | Cookie | Web UI (Hono JSX) |
+| `POST` | `/login` | — | Web UI login (sets cookie) |
+
+Base URLs:
+
+- Production: `https://<your-worker>.<subdomain>.workers.dev`
+- Local: `http://127.0.0.1:8787`

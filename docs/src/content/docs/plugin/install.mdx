@@ -1,0 +1,44 @@
+---
+title: Install
+description: Install the divmemory plugin in Droid.
+---
+
+## Prerequisites
+
+Ensure `DIVMEMORY_API_KEY` and `DIVMEMORY_WORKER_URL` are exported in your shell profile (see [Secrets](/self-hosting/secrets/)).
+
+## Step 1: Add the marketplace
+
+```bash
+droid plugin marketplace add https://github.com/divkix/divmemory
+```
+
+## Step 2: Install the plugin
+
+```bash
+droid plugin install divmemory@divmemory --scope user
+```
+
+## Step 3: Repeat on every laptop
+
+Install the same plugin and env vars on each machine you want to share memory across.
+
+Projects with a git remote share memory through the normalized remote URL. Local-only folders use a hashed absolute-path slug such as `local-3f91ab4c2d10-my-app`, preventing collisions between different folders with the same basename.
+
+## What's installed
+
+The Factory-visible plugin lives at `plugins/divmemory/` with the following structure:
+
+```
+├── .factory-plugin/
+│   └── plugin.json         # Plugin manifest
+├── hooks/
+│   ├── hooks.json          # Hook configuration
+│   ├── runtime.mjs         # Hook runtime
+│   ├── session-start.mjs   # SessionStart hook
+│   └── session-end.mjs     # SessionEnd hook
+├── commands/
+│   └── memory.md           # /memory slash command
+└── skills/
+    └── memory/SKILL.md     # Agent skill definition
+```
