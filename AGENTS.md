@@ -2,69 +2,58 @@
 
 ## Project Structure
 
-This is a monorepo using Bun workspaces with three packages:
+This is a Bun monorepo with three workspaces:
 
-- `worker/` - Cloudflare Worker (Hono + Drizzle ORM + SQLite/D1)
-- `cli/` - Bootstrap CLI tool (`divmemory-bootstrap`)
-- `plugin/` - Plugin package
+```
+worker/   — Cloudflare Worker (Hono + D1 + Drizzle), web UI, and REST API
+plugin/   — Factory Droid plugin (scripts, commands, skills)
+cli/      — Bootstrap CLI for project setup
+e2e/      — Playwright end-to-end tests
+specs/    — Feature specifications
+```
 
-Source lives in each workspace's `src/` directory. Tests are co-located as `*.test.ts` files.
+Source code lives in `src/` within each workspace. Tests are co-located (`*.test.ts`) or in a `tests/` directory.
 
 ## Build, Test, and Development Commands
 
-Run these from the repository root:
+| Command | Purpose |
+|---------|---------|
+| `bun dev` | Start the worker dev server (port 8787) |
+| `bun run lint` | Run Biome checks across all workspaces |
+| `bun run format` | Auto-format with Biome |
+| `bun run typecheck` | TypeScript type-check all workspaces |
+| `bun run build` | Build all workspaces |
+| `bun test` | Run all Vitest unit tests |
+| `bun run test:e2e` | Run Playwright E2E tests (requires a running dev server) |
 
-| Command | Description |
-|---------|-------------|
-| `bun install` | Install dependencies across all workspaces |
-| `bun run dev` | Start the worker dev server (port 8787) |
-| `bun run typecheck` | TypeScript type checking across all workspaces |
-| `bun run build` | Build all packages |
-| `bun run test` | Run all tests via Vitest |
-| `bun run lint` | Check formatting and linting with Biome |
-| `bun run format` | Auto-fix Biome issues |
+Per-workspace commands use `--filter`:
+```
+bun run --filter @divmemory/worker test:cf    # Cloudflare integration tests
+bun run --filter @divmemory/worker deploy     # Deploy to Cloudflare
+```
 
-## Coding Style
+## Coding Style & Naming
 
-- **Formatter**: Biome — tab indentation, double quotes, semicolons, trailing commas
-- **TypeScript**: Strict mode enabled; use `import type` for type-only imports
-- **No `any`**: The linter enforces explicit typing
-- **Line width**: 100 characters
+- **Formatting**: Biome — tabs (width 2), double quotes, semicolons, trailing commas, LF line endings, 100-char width
+- **TypeScript**: Strict mode, `verbatimModuleSyntax`, `noUnusedLocals`, `noUnusedParameters`
+- **Lint rules**: `noUnusedImports`, `noUnusedVariables`, `noExplicitAny`, `useImportType` (all errors)
+- **Imports**: Use `import type` for type-only imports
+- **Validation**: Zod schemas for runtime validation
+- **Framework**: Hono for HTTP, Drizzle ORM for database access
 
-## Testing
+## Testing Guidelines
 
-- **Framework**: Vitest
-- **Pattern**: Tests are co-located alongside source files (`*.test.ts`)
-- **Run specific workspace**: `cd worker && bun run test`
-- CI runs the full test suite on every push and pull request.
+- **Unit tests**: Vitest (`vitest.config.ts` in each workspace). Co-locate test files as `*.test.ts`.
+- **Cloudflare integration tests**: `vitest.cloudflare.config.ts` — uses `@cloudflare/vitest-pool-workers`
+- **E2E tests**: Playwright (`e2e/` directory) with desktop and mobile projects. Run `bun run test:e2e`.
+- CI runs tests on Ubuntu and Windows. E2E runs on Ubuntu only.
 
 ## Commit & Pull Request Guidelines
 
-This project uses **Conventional Commits** with scope prefixes. The template is:
+- **Commits**: [Conventional Commits](https://www.conventionalcommits.org/) with optional scope — `feat(worker):`, `fix(plugin):`, `refactor:`, `test:`, `docs:`, `chore:`
+- **PRs**: Reference issues in the body (e.g., `closes #16`). CI must pass (lint, typecheck, build, test, Cloudflare integration tests, E2E) before merging.
+- Target `main` as the base branch.
 
-```text
-<type>(<scope>): <description>
-```
+## Environment & Secrets
 
-When no scope is applicable, use:
-
-```text
-<type>: <description>
-```
-
-Examples from history:
-- `refactor(worker): extract shared utilities and split webui (#4)`
-- `fix(worker): anchor turn boundary search to newline prefix`
-- `chore(deps): bump all dependencies to latest versions`
-- `test: complete 78 deferred assertions for issue #1`
-
-PRs should include a clear description, and CI must pass (lint, typecheck, build, test).
-
-## Architecture Overview
-
-- **Runtime**: Cloudflare Worker
-- **Web Framework**: Hono with JSX rendering
-- **Database**: SQLite via Drizzle ORM (managed via Wrangler/D1)
-- **Validation**: Zod
-- **Deployment**: Wrangler CLI (`wrangler deploy` from `worker/`)
-- **CI/CD**: GitHub Actions workflow runs `install`, `lint`, `typecheck`, `build`, `test`
+Copy `.dev.vars.example` to `.dev.vars` and fill in secrets. Never commit `.dev.vars` or `.env` files. Use `wrangler secret` for production secrets.
