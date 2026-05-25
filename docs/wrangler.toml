@@ -1,5 +1,5 @@
 name = "divmemory-docs"
 compatibility_date = "2025-04-10"
 
-[site]
-bucket = "./dist"
+pages_build_output_dir = "./dist"
+

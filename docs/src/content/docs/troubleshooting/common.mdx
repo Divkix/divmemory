@@ -7,7 +7,7 @@ description: Fixes for frequent problems.
 | --- | --- | --- |
 | `500` on first request | D1 not connected | Double-check `database_id` in `wrangler.jsonc`. |
 | `401 Unauthorized` | Wrong `DIVMEMORY_API_KEY` | Verify Worker secret matches your shell env var. Secrets are case-sensitive. |
-| Migrations fail | SQL already applied | Skip files already run. Check `migrations/meta/` for the journal. |
+| Migrations fail | SQL already applied | Inspect applied/pending migrations with `wrangler d1 migrations list <db-name>` (referencing `migrations/meta/` for the journal). Apply pending migrations using `wrangler d1 migrations apply <db-name> --remote`. |
 | Worker deploy hangs | Not logged in | Run `npx wrangler login`. |
 | Firepass extraction fails | Missing or invalid `FIREWORKS_API_KEY` | Verify key is active and has Firepass quota. Check logs via `npx wrangler tail`. |
 | Queue send fails | Queue binding missing | Check `wrangler.jsonc` queues config and that queues exist. |

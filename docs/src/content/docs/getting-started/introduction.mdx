@@ -22,7 +22,8 @@ flowchart LR
 	D1["Cloudflare D1\n(SQLite)"]
 
 	Plugin -->|"POST /ingest"| Worker
-	Worker -->|"GET /context"| Plugin
+	Plugin -->|"GET /context"| Worker
+
 	Plugin -.->|"print instantly"| Cache
 	Plugin -.->|"offline fallback"| Queue
 	Queue -.->|"retry later"| Worker
