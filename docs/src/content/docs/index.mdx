@@ -1,0 +1,37 @@
+---
+title: divmemory
+description: Persistent cross-session memory for coding agents, backed by Cloudflare.
+template: splash
+hero:
+  tagline: Give your coding agents a persistent second brain.
+  image:
+    file: ../../../public/favicon.svg
+  actions:
+    - text: Get Started
+      link: /getting-started/introduction/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/divkix/divmemory
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Why divmemory?
+
+<CardGrid stack>
+	<Card title="Zero Git Noise" icon="error">
+		No temp files, no git commits, no repository pollution. Memories are stored securely in Cloudflare D1.
+	</Card>
+	<Card title="Instant Sync" icon="rocket">
+		Injects cached context into the agent at session start, and asynchronously saves facts at session end.
+	</Card>
+	<Card title="Cross-Session Persistence" icon="document">
+		Maintains memory across multiple chat sessions, allowing agents to build on top of past context.
+	</Card>
+	<Card title="Highly Extensible" icon="setting">
+		Works natively as a Factory Droid plugin and a simple REST API.
+	</Card>
+</CardGrid>
