@@ -1,4 +1,4 @@
-Full docs: https://divmemory.pages.dev
+Full docs: https://divmemory-docs.divkix.workers.dev
 
 # Repository Guidelines
 

@@ -2,7 +2,7 @@
 
 `divmemory` is a Droid plugin + Cloudflare Workers backend that gives your coding agents a persistent second brain. At session end, the full conversation is extracted into structured memory facts and stored in Cloudflare D1. At session start, cached memory is injected directly into the agent context while fresh context syncs for the next run. Zero repo file editing, zero git noise.
 
-Full docs: https://divmemory.pages.dev
+Full docs: https://divmemory-docs.divkix.workers.dev
 
 ## Architecture
 

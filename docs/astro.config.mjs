@@ -2,7 +2,7 @@ import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 
 export default defineConfig({
-	site: "https://divmemory.pages.dev",
+	site: "https://divmemory-docs.divkix.workers.dev",
 	integrations: [
 		starlight({
 			title: "divmemory",
