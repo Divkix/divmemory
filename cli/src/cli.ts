@@ -5,17 +5,19 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveWorkerUrl } from "@divmemory/plugin/config";
 import {
 	divmemoryHome,
+	encodedPathMatchesKey,
 	getAllMappingKeys,
 	getProjectName,
 	localProjectId,
 	lookupProjectMapping,
 	mappingsPath,
+	parseEncodedPath,
 	getProjectId as resolveProjectId,
 } from "@divmemory/plugin/project-mappings";
 
-const DEFAULT_WORKER_URL = "https://divmemory.divkix.workers.dev";
 const DEFAULT_LIMIT = 50;
 const RATE_LIMIT_MS = 1000;
 const REQUEST_TIMEOUT_MS = 30000;
@@ -198,47 +200,16 @@ export function decodeProjectDir(encoded: string): string | null {
 	// /Users/div/projects/my-app -> -Users-div-projects-my-app). Keys must start
 	// with "-"; Windows drive-letter paths are encoded with a __drive_<letter>
 	// marker (e.g. C:\foo\bar -> -__drive_c-foo-bar).
-	if (!encoded.startsWith("-")) return null;
+	const parsed = parseEncodedPath(encoded);
+	if (!parsed) return null;
 
 	const cacheKey = getDecodeCacheKey(encoded);
 	if (decodeCache.has(cacheKey)) {
 		return decodeCache.get(cacheKey) ?? null;
 	}
 
-	let windowsDrive: string | null = null;
-	let rest = encoded.slice(1);
-
-	// Detect Windows drive marker from encodePath (e.g. -__drive_c-Users-me-app)
-	if (rest.startsWith("__drive_")) {
-		const candidate = rest[8];
-		if (candidate && /^[A-Za-z]$/.test(candidate)) {
-			windowsDrive = candidate.toLowerCase();
-			if (rest.length > 9 && rest[9] === "-") {
-				rest = rest.slice(10);
-			} else {
-				rest = rest.slice(9);
-			}
-		}
-	}
-
-	const dashPositions: number[] = [];
-	for (let i = 0; i < rest.length; i++) {
-		if (rest[i] === "-") dashPositions.push(i);
-	}
-
-	// Split rest into segments using dashPositions
-	const segments: string[] = [];
-	let lastPos = 0;
-	for (const pos of dashPositions) {
-		segments.push(rest.slice(lastPos, pos));
-		lastPos = pos + 1;
-	}
-	segments.push(rest.slice(lastPos));
-
 	// Try to resolve by checking filesystem (handles paths with literal dashes)
-	const resolved = windowsDrive
-		? resolveDecodedPath(segments, windowsDrive)
-		: resolveDecodedPath(segments);
+	const resolved = resolveDecodedPath(parsed.segments, parsed.windowsDrive);
 	if (resolved) {
 		decodeCache.set(cacheKey, resolved);
 		return resolved;
@@ -247,32 +218,14 @@ export function decodeProjectDir(encoded: string): string | null {
 	// Consult central mapping for deleted worktrees with literal dashes
 	const keys = getAllMappingKeys();
 	for (const key of keys) {
-		const winMatch = key.match(/^[A-Za-z]:[/\\]/);
-		if (key.startsWith("/")) {
-			const stripped = key.slice(1);
-			const encodedKey = stripped.replace(/\//g, "-");
-			if (encodedKey === rest) {
-				decodeCache.set(cacheKey, key);
-				return key;
-			}
-		} else if (winMatch && windowsDrive) {
-			const driveLetter = winMatch[0][0].toLowerCase();
-			const stripped = key
-				.slice(3)
-				.replace(/^[/\\]/, "")
-				.replace(/[/\\]/g, "-");
-			if (driveLetter === windowsDrive && stripped === rest) {
-				decodeCache.set(cacheKey, key);
-				return key;
-			}
+		if (encodedPathMatchesKey(encoded, key)) {
+			decodeCache.set(cacheKey, key);
+			return key;
 		}
 	}
 
 	// If no decoded path exists on disk and no mapping found, return the fully-decoded path anyway
-	if (windowsDrive) {
-		return `${windowsDrive.toUpperCase()}:${rest.length > 0 ? `/${rest.replace(/-/g, "/")}` : "/"}`;
-	}
-	return `/${rest.replace(/-/g, "/")}`;
+	return parsed.decodedPath;
 }
 
 /**
@@ -662,12 +615,7 @@ async function main() {
 	const dir = flags.dir || "~/.factory/sessions/";
 	const limit = flags.limit ?? DEFAULT_LIMIT;
 	const dryRun = flags.dryRun ?? false;
-	const envWorkerUrl = process.env.DIVMEMORY_WORKER_URL;
-	const workerUrl =
-		flags.worker ||
-		(envWorkerUrl && envWorkerUrl !== "undefined" && envWorkerUrl !== "null"
-			? envWorkerUrl
-			: DEFAULT_WORKER_URL);
+	const workerUrl = resolveWorkerUrl(flags.worker);
 
 	let apiKey: string | undefined;
 	try {

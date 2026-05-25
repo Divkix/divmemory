@@ -2,6 +2,13 @@ export function divmemoryHome(home?: string): string;
 export function getProjectName(projectId: string): string;
 export function mappingsPath(home?: string): string;
 export function encodePath(absolutePath: string): string;
+export function parseEncodedPath(encoded: string): {
+	rest: string;
+	segments: string[];
+	windowsDrive: string | null;
+	decodedPath: string;
+} | null;
+export function encodedPathMatchesKey(encoded: string, key: string): boolean;
 export function lookupProjectMapping(
 	absolutePath: string,
 	options?: { home?: string },

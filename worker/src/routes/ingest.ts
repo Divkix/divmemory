@@ -55,12 +55,15 @@ Conversation:
 {CONVERSATION}
 ---CONVERSATION_END---`;
 
+export const TRUNCATION_PREFIX = "[Conversation truncated for length...]\n\n";
+
 /**
  * Safely slices a conversation string from the end to fit within a char limit,
  * ensuring it starts cleanly at a turn boundary ("User:" or "Assistant:").
  */
 export function truncateConversationFromEnd(text: string, maxChars = 100_000): string {
 	if (text.length <= maxChars) return text;
+	if (maxChars <= 0) return text.length === 0 ? "" : TRUNCATION_PREFIX;
 
 	// Take the raw slice from the end
 	let sliced = text.slice(-maxChars);
@@ -85,7 +88,7 @@ export function truncateConversationFromEnd(text: string, maxChars = 100_000): s
 		sliced = sliced.slice(splitIdx);
 	}
 
-	return `[Conversation truncated for length...]\n\n${sliced}`;
+	return `${TRUNCATION_PREFIX}${sliced}`;
 }
 
 export async function extractFacts(

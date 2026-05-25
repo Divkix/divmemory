@@ -13,6 +13,7 @@ import {
 	jaccardSimilarity,
 	processExtractionAfter,
 	recoverJSON,
+	TRUNCATION_PREFIX,
 	truncateConversationFromEnd,
 } from "./ingest";
 
@@ -642,8 +643,6 @@ describe("jaccardSimilarity — token overlap dedup", () => {
 	});
 });
 
-const TRUNCATION_PREFIX = "[Conversation truncated for length...]\n\n";
-
 describe("jaccardSimilarity — properties", () => {
 	const arbitraryText = fc.oneof(fc.string(), fc.string({ unit: "grapheme" }));
 
@@ -799,9 +798,12 @@ describe("truncateConversationFromEnd — properties", () => {
 		);
 	});
 
-	it("maxChars 0 uses slice(-0) so non-empty text keeps full body after banner", () => {
-		const result = truncateConversationFromEnd("hello", 0);
-		expect(result).toBe(`${TRUNCATION_PREFIX}hello`);
+	it("returns only the truncation prefix for non-empty text when maxChars is zero", () => {
+		expect(truncateConversationFromEnd("hello", 0)).toBe(TRUNCATION_PREFIX);
+	});
+
+	it("returns only the truncation prefix for non-empty text when maxChars is negative", () => {
+		expect(truncateConversationFromEnd("hello", -1)).toBe(TRUNCATION_PREFIX);
 	});
 
 	it("does not treat inline User: without newline as a turn boundary", () => {

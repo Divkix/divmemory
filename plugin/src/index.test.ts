@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+	encodedPathMatchesKey,
 	encodePath,
 	lookupProjectMapping,
 	mappingsPath,
 	normalizeGitRemote,
+	parseEncodedPath,
 } from "../scripts/project-mappings.mjs";
 
 describe("encodePath", () => {
@@ -22,6 +24,57 @@ describe("encodePath", () => {
 
 	it("should handle root-level paths", () => {
 		expect(encodePath("/home/user")).toBe("-home-user");
+	});
+
+	it("preserves Windows drive letters in the encoded contract", () => {
+		expect(encodePath("C:\\Users\\div\\projects\\my-app")).toBe(
+			"-__drive_c-Users-div-projects-my-app",
+		);
+	});
+});
+
+describe("parseEncodedPath", () => {
+	it("parses Unix encoded paths into shared codec parts", () => {
+		expect(parseEncodedPath("-Users-div-projects-my-app")).toEqual({
+			rest: "Users-div-projects-my-app",
+			segments: ["Users", "div", "projects", "my", "app"],
+			windowsDrive: null,
+			decodedPath: "/Users/div/projects/my/app",
+		});
+	});
+
+	it("parses Windows drive markers into shared codec parts", () => {
+		expect(parseEncodedPath("-__drive_c-Users-div-projects-my-app")).toEqual({
+			rest: "Users-div-projects-my-app",
+			segments: ["Users", "div", "projects", "my", "app"],
+			windowsDrive: "c",
+			decodedPath: "C:/Users/div/projects/my/app",
+		});
+	});
+
+	it("returns null for non-encoded paths", () => {
+		expect(parseEncodedPath("/Users/div/projects/my-app")).toBeNull();
+	});
+});
+
+describe("encodedPathMatchesKey", () => {
+	it("matches Unix absolute mapping keys", () => {
+		expect(encodedPathMatchesKey("-Users-div-projects-my-app", "/Users/div/projects/my-app")).toBe(
+			true,
+		);
+	});
+
+	it("matches Windows absolute mapping keys", () => {
+		expect(
+			encodedPathMatchesKey(
+				"-__drive_c-Users-div-projects-my-app",
+				"C:\\Users\\div\\projects\\my-app",
+			),
+		).toBe(true);
+	});
+
+	it("does not match relative keys", () => {
+		expect(encodedPathMatchesKey("-relative-project", "relative/project")).toBe(false);
 	});
 });
 

@@ -1,12 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { login, seedMemory } from "./helpers";
 
 test.describe("responsive layout", () => {
-	let projectId: string;
-
-	test.beforeEach(async ({ page }) => {
+	test.beforeEach(async ({ page, projectId }) => {
 		await login(page);
-		projectId = `e2e-proj-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 		await seedMemory(page, `E2E responsive ${Date.now()}`, projectId);
 		await page.goto(`/?project=${encodeURIComponent(projectId)}`);
 	});

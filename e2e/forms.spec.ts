@@ -1,15 +1,12 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { login, seedMemory } from "./helpers";
 
 test.describe("memory form actions", () => {
-	let projectId: string;
-
 	test.beforeEach(async ({ page }) => {
 		await login(page);
-		projectId = `e2e-proj-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 	});
 
-	test("PATCH edit updates memory content", async ({ page }) => {
+	test("PATCH edit updates memory content", async ({ page, projectId }) => {
 		const original = `Original E2E ${Date.now()}`;
 		const updated = `Updated E2E ${Date.now()}`;
 		const memoryId = await seedMemory(page, original, projectId);
@@ -26,7 +23,7 @@ test.describe("memory form actions", () => {
 		await expect(page.locator(".memory-card", { hasText: updated })).toBeVisible();
 	});
 
-	test("DELETE with confirmation archives memory", async ({ page }) => {
+	test("DELETE with confirmation archives memory", async ({ page, projectId }) => {
 		const label = `Memory to archive ${Date.now()}`;
 		const memoryId = await seedMemory(page, label, projectId);
 		await page.goto(`/?project=${encodeURIComponent(projectId)}&delete=${memoryId}`);

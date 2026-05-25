@@ -17,38 +17,11 @@ async function loadCliModule() {
 	return import("./cli");
 }
 
-/** Mirrors segment splitting and driver-letter extraction from decodeProjectDir for BFS tests. */
-function segmentsFromEncoded(encoded: string): {
-	segments: string[];
-	windowsDrive: string | null;
-} {
-	let rest = encoded.slice(1);
-	let windowsDrive: string | null = null;
-
-	if (rest.startsWith("__drive_")) {
-		const candidate = rest[8];
-		if (candidate && /^[A-Za-z]$/.test(candidate)) {
-			windowsDrive = candidate.toLowerCase();
-			if (rest.length > 9 && rest[9] === "-") {
-				rest = rest.slice(10);
-			} else {
-				rest = rest.slice(9);
-			}
-		}
-	}
-
-	const dashPositions: number[] = [];
-	for (let i = 0; i < rest.length; i++) {
-		if (rest[i] === "-") dashPositions.push(i);
-	}
-	const segments: string[] = [];
-	let lastPos = 0;
-	for (const pos of dashPositions) {
-		segments.push(rest.slice(lastPos, pos));
-		lastPos = pos + 1;
-	}
-	segments.push(rest.slice(lastPos));
-	return { segments, windowsDrive };
+async function parseEncodedFixture(encoded: string) {
+	const { parseEncodedPath } = await import("@divmemory/plugin/project-mappings");
+	const parsed = parseEncodedPath(encoded);
+	if (!parsed) throw new Error(`Expected encoded path fixture: ${encoded}`);
+	return parsed;
 }
 
 describe("bootstrap cli", () => {
@@ -690,8 +663,8 @@ describe("bootstrap cli", () => {
 			mkdirSync(target, { recursive: true });
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
-			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(target));
-			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(target));
+			const parsed = await parseEncodedFixture(encodePath(target));
+			expect(resolveDecodedPath(parsed.segments, parsed.windowsDrive)).toBe(resolve(target));
 		});
 
 		it("prefers slash-expanded path when multiple terminal candidates exist", async () => {
@@ -704,9 +677,11 @@ describe("bootstrap cli", () => {
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
 			const ambiguousTarget = join(tmpDir, "a-b");
-			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(ambiguousTarget));
+			const parsed = await parseEncodedFixture(encodePath(ambiguousTarget));
 			// BFS pushes slash joins before dash joins; /.../a/b is listed before /.../a-b
-			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(join(tmpDir, "a", "b")));
+			expect(resolveDecodedPath(parsed.segments, parsed.windowsDrive)).toBe(
+				resolve(join(tmpDir, "a", "b")),
+			);
 		});
 
 		it("resolves a single-segment path to the existing directory", async () => {
@@ -715,8 +690,8 @@ describe("bootstrap cli", () => {
 			expect(resolveDecodedPath).toBeDefined();
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
-			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(tmpDir));
-			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(tmpDir));
+			const parsed = await parseEncodedFixture(encodePath(tmpDir));
+			expect(resolveDecodedPath(parsed.segments, parsed.windowsDrive)).toBe(resolve(tmpDir));
 		});
 
 		it("resolves root-equivalent single empty segment to system root", async () => {
@@ -734,8 +709,8 @@ describe("bootstrap cli", () => {
 
 			const missing = join(tmpDir, "does-not-exist");
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
-			const { segments, windowsDrive } = segmentsFromEncoded(encodePath(missing));
-			expect(resolveDecodedPath(segments, windowsDrive)).toBeNull();
+			const parsed = await parseEncodedFixture(encodePath(missing));
+			expect(resolveDecodedPath(parsed.segments, parsed.windowsDrive)).toBeNull();
 		});
 
 		it("matches decodeProjectDir for a literal-dash fixture", async () => {
@@ -749,8 +724,8 @@ describe("bootstrap cli", () => {
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
 			const encoded = encodePath(target);
-			const { segments, windowsDrive } = segmentsFromEncoded(encoded);
-			expect(resolveDecodedPath(segments, windowsDrive)).toBe(target);
+			const parsed = await parseEncodedFixture(encoded);
+			expect(resolveDecodedPath(parsed.segments, parsed.windowsDrive)).toBe(target);
 			expect(decodeProjectDir(encoded)).toBe(target);
 		});
 
@@ -764,8 +739,8 @@ describe("bootstrap cli", () => {
 
 			const { encodePath } = await import("@divmemory/plugin/project-mappings");
 			const encoded = encodePath(target);
-			const { segments, windowsDrive } = segmentsFromEncoded(encoded);
-			expect(resolveDecodedPath(segments, windowsDrive)).toBe(resolve(target));
+			const parsed = await parseEncodedFixture(encoded);
+			expect(resolveDecodedPath(parsed.segments, parsed.windowsDrive)).toBe(resolve(target));
 		});
 	});
 

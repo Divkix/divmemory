@@ -1,0 +1,20 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "divmemory-e2e",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-04-10",
+	"compatibility_flags": ["nodejs_compat"],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "divmemory-db-e2e",
+			"database_id": "00000000-0000-0000-0000-000000000002",
+			"migrations_dir": "./migrations"
+		}
+	],
+	"vars": {
+		"DIVMEMORY_API_KEY": "e2e-api-key",
+		"DIVMEMORY_WEB_PASSWORD": "e2e-test-password",
+		"COOKIE_SECRET": "e2e-test-cookie-secret"
+	}
+}
