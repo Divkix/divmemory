@@ -1,0 +1,47 @@
+---
+title: Introduction
+description: What divmemory is and how it works.
+---
+
+divmemory is a Droid plugin + Cloudflare Workers backend that gives your coding agents a persistent second brain.
+
+At session end, the full conversation is extracted into structured memory facts and stored in Cloudflare D1. At session start, cached memory is injected directly into the agent context while fresh context syncs for the next run.
+
+Zero repo file editing. Zero git noise.
+
+## Architecture
+
+```mermaid
+flowchart LR
+	Client["Client Machine"]
+	Plugin["Droid Plugin\n(hooks + CLI)"]
+	Cache["~/.divmemory/cache"]
+	Queue["~/.divmemory/queue.jsonl"]
+	Worker["Cloudflare Worker\n(Hono + Drizzle ORM)"]
+	Firepass["Fireworks Firepass"]
+	D1["Cloudflare D1\n(SQLite)"]
+
+	Plugin -->|"POST /ingest"| Worker
+	Plugin -->|"GET /context"| Worker
+
+	Plugin -.->|"print instantly"| Cache
+	Plugin -.->|"offline fallback"| Queue
+	Queue -.->|"retry later"| Worker
+	Worker -->|"extract facts"| Firepass
+	Firepass -->|"structured facts"| D1
+	Worker <--> D1
+```
+
+## Memory topics
+
+Facts are grouped by topic:
+
+| Topic | What it captures |
+| --- | --- |
+| `project_context` | Domain language, patterns, libraries, project-specific rules |
+| `decisions` | Architectural or tooling decisions with rationale |
+| `issues` | Known bugs, edge cases, things to watch out for |
+| `preferences` | Personal developer preferences that apply globally |
+| `general` | Anything useful that does not fit the above |
+
+Cross-project developer preferences flow through the reserved `global` project and are included with every project's context.

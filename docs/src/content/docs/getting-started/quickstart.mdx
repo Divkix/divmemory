@@ -1,0 +1,72 @@
+---
+title: Quickstart
+description: Get divmemory running in under 10 minutes.
+---
+
+## Prerequisites
+
+- [Bun](https://bun.sh) >= 1.3
+- A Cloudflare account with Workers and D1 enabled
+- A Fireworks AI account with Firepass subscription
+- Node.js 20+ for Droid hook scripts
+
+## 1. Clone and install
+
+```bash
+git clone https://github.com/divkix/divmemory.git
+cd divmemory
+bun install
+```
+
+## 2. Generate an API key
+
+```bash
+openssl rand -hex 32
+```
+
+Use this same value for the Worker secret **and** in your shell / Droid env on every laptop.
+
+## 3. Configure the Worker
+
+```bash
+cd worker
+npx wrangler d1 create divmemory-db
+```
+
+Copy the `database_id` into `worker/wrangler.jsonc`, then apply migrations and create queues:
+
+```bash
+npx wrangler d1 migrations apply divmemory-db --remote
+npx wrangler queues create divmemory-ingest
+npx wrangler queues create divmemory-ingest-dlq
+```
+
+## 4. Set secrets
+
+```bash
+npx wrangler secret put DIVMEMORY_API_KEY
+npx wrangler secret put FIREWORKS_API_KEY
+npx wrangler secret put DIVMEMORY_WEB_PASSWORD
+```
+
+## 5. Deploy
+
+```bash
+bun run deploy
+```
+
+## 6. Configure your shell
+
+```bash
+export DIVMEMORY_API_KEY="<same token>"
+export DIVMEMORY_WORKER_URL="https://<your-worker>.<subdomain>.workers.dev"
+```
+
+## 7. Install the Droid plugin
+
+```bash
+droid plugin marketplace add https://github.com/divkix/divmemory
+droid plugin install divmemory@divmemory --scope user
+```
+
+Run a session — at end, facts are extracted and stored. At start, context is injected automatically.

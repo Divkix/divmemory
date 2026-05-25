@@ -1,0 +1,45 @@
+---
+title: Status
+description: GET /status — health and project statistics.
+---
+
+## Project status
+
+```bash
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/status?project=github.com/divkix/divmemory"
+```
+
+## Response
+
+```json
+{
+  "project_id": "github.com/divkix/divmemory",
+  "project_name": "divmemory",
+  "last_seen": "2024-06-10T12:00:00Z",
+  "sessions": {
+    "total": 15,
+    "pending_extraction": 2,
+    "extraction_errors": 1
+  },
+  "memories": {
+    "active": 42,
+    "curated": 7
+  },
+  "consolidation": {
+    "in_progress": false
+  },
+  "last_error": "Firepass extraction failed"
+}
+```
+
+## Global status
+
+Omit `?project` for a global overview:
+
+```bash
+curl -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  "$DIVMEMORY_WORKER_URL/status"
+```
+
+Returns total counts across all projects.

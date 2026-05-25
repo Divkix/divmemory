@@ -1,0 +1,44 @@
+---
+title: Ingest
+description: POST /ingest — submit a session transcript.
+---
+
+Submit a session transcript for AI fact extraction. This is the main entry point for the SessionEnd hook.
+
+## Request
+
+```bash
+curl -X POST "$DIVMEMORY_WORKER_URL/ingest" \
+  -H "Authorization: Bearer $DIVMEMORY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "manual-session-1",
+    "project_id": "github.com/divkix/divmemory",
+    "project_name": "divmemory",
+    "source": "manual",
+    "conversation": "User: We prefer Cloudflare D1 for this project.\\n\\nAssistant: Noted."
+  }'
+```
+
+## Fields
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Unique session identifier |
+| `project_id` | string | Yes | Normalized project identifier |
+| `project_name` | string | No | Human-readable project name |
+| `source` | string | No | Source label, default `droid` |
+| `conversation` | string | Yes | Clean `User:` / `Assistant:` transcript |
+| `metadata` | any | No | Opaque metadata payload |
+
+## Response
+
+Returns JSON with `ok`, `status`, `session_id`, and `facts_written`.
+
+| Status | HTTP | Meaning |
+| --- | --- | --- |
+| `queued` | `202` or `200` | Extraction running async via queue or `waitUntil` |
+| `processed` | `200` | Extracted synchronously (tests / local fallback) |
+| `duplicate` | `200` | Session already seen and fully processed |
+
+If Worker offline, the plugin queues locally and retries later.

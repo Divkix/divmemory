@@ -42,7 +42,9 @@
 			"!!**/node_modules",
 			"!!**/dist",
 			"!!**/build",
-			"!!**/migrations"
+			"!!**/migrations",
+			"!!docs/.astro",
+			"!!docs/src/content"
 		],
 		"ignoreUnknown": true
 	}

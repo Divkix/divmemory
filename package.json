@@ -5,7 +5,8 @@
 	"workspaces": [
 		"worker",
 		"plugin",
-		"cli"
+		"cli",
+		"docs"
 	],
 	"scripts": {
 		"install:all": "bun install",

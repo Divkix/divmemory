@@ -1,0 +1,21 @@
+{
+	"name": "@divmemory/docs",
+	"version": "1.0.0",
+	"private": true,
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build",
+		"preview": "astro preview",
+		"astro": "astro",
+		"typecheck": "astro check"
+	},
+	"dependencies": {
+		"astro": "^5.7.12",
+		"@astrojs/starlight": "^0.34.2",
+		"sharp": "^0.34.1"
+	},
+	"devDependencies": {
+		"@astrojs/check": "^0.9.4",
+		"typescript": "^6.0.3"
+	}
+}

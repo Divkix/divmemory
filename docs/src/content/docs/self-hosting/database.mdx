@@ -1,0 +1,53 @@
+---
+title: Database Setup
+description: Create and configure the Cloudflare D1 database.
+---
+
+## Create the D1 database
+
+```bash
+cd worker
+npx wrangler d1 create divmemory-db
+```
+
+Wrangler prints a `database_id` (UUID). Copy that value and paste it into `worker/wrangler.jsonc`, replacing the placeholder `database_id`:
+
+```jsonc
+{
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "divmemory-db",
+			"database_id": "<paste-your-uuid-here>",
+			"migrations_dir": "./migrations"
+		}
+	]
+}
+```
+
+## Apply migrations
+
+D1 does not run migrations automatically. Apply pending migrations with Wrangler:
+
+```bash
+cd worker
+npx wrangler d1 migrations apply divmemory-db --remote
+```
+
+This reads `migrations_dir` from `wrangler.jsonc` and tracks which migrations have already run.
+
+> Prefer `d1 migrations apply` over `d1 execute --file=...` per migration file. Manual `--file` execution bypasses the migration journal and can cause duplicate runs or drift.
+
+## List applied migrations
+
+```bash
+npx wrangler d1 migrations list divmemory-db --remote
+```
+
+## Export (backup) before risky changes
+
+```bash
+npx wrangler d1 export divmemory-db --remote --output=divmemory-backup.sql
+```
+
+Store the `.sql` file outside the repo. Local `~/.divmemory/cache` and `queue.jsonl` files are convenience state only — **D1 is the source of truth**.

@@ -1,3 +1,5 @@
+Full docs: https://divmemory.pages.dev
+
 # Repository Guidelines
 
 ## Project Structure

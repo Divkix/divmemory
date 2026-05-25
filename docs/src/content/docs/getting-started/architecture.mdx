@@ -1,0 +1,46 @@
+---
+title: Architecture
+description: How divmemory ingests, stores, and retrieves memory.
+---
+
+## Hook flow
+
+### SessionEnd
+
+1. Droid plugin reads the session transcript (JSONL)
+2. Extracts clean `User:` / `Assistant:` conversation text
+3. POSTs to `/ingest` on the Worker
+4. Worker queues or processes the ingestion
+5. Firepass extracts structured facts (JSON)
+6. Facts are deduplicated and written to D1 (`memories` table)
+
+If the Worker is offline, the hook writes to `~/.divmemory/queue.jsonl` and retries later.
+
+### SessionStart
+
+1. Plugin determines the project ID from `git remote get-url origin`
+2. Reads cached context from `~/.divmemory/cache/<project>.txt`
+3. Prints it instantly to stdout (Droid injects it into context)
+4. Refreshes cache from `GET /context` (non-blocking after print)
+
+### Consolidation
+
+Unconsolidated sessions are periodically merged by a cron job (3am UTC) or manual `POST /consolidate`. The consolidation engine feeds existing memories + new conversations into Firepass and produces a clean, deduplicated fact set.
+
+## Data model
+
+The D1 schema has three tables:
+
+| Table | Purpose |
+| --- | --- |
+| `projects` | Metadata: `id`, `name`, `sessionCount`, `lastSeen` |
+| `sessions` | Raw transcripts: `id`, `projectId`, `rawText`, `consolidated`, `extractionError` |
+| `memories` | Extracted facts: `id`, `projectId`, `topic`, `content`, `confidence`, `curated`, `status` |
+
+Curated facts (`curated = 1`) are protected from automatic overwrite and soft-archived on delete.
+
+## Project path mappings
+
+When you work in a git worktree, divmemory records the canonical project ID (normalized git remote) keyed by absolute path in `~/.divmemory/project_mappings.json`.
+
+This lets bootstrap resolve historical sessions from deleted worktrees to the correct canonical ID instead of a hashed `local-*` slug.
