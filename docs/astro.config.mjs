@@ -6,14 +6,11 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: "divmemory",
-			description:
-				"Persistent cross-session memory for coding agents, backed by Cloudflare.",
+			description: "Persistent cross-session memory for coding agents, backed by Cloudflare.",
 			logo: {
 				src: "./public/favicon.svg",
 			},
-			social: {
-				github: "https://github.com/divkix/divmemory",
-			},
+			social: [{ icon: "github", label: "GitHub", href: "https://github.com/divkix/divmemory" }],
 			sidebar: [
 				{
 					label: "Getting Started",
@@ -52,9 +49,7 @@ export default defineConfig({
 				},
 				{
 					label: "CLI",
-					items: [
-						{ label: "Bootstrap", slug: "cli/bootstrap" },
-					],
+					items: [{ label: "Bootstrap", slug: "cli/bootstrap" }],
 				},
 				{
 					label: "Development",
