@@ -20,6 +20,7 @@ function nowISO(): string {
  *  Returns the count of deleted memories. */
 export async function cascadeDeleteNearDuplicates(
 	dbCtx: DbLike,
+	addStmt: (q: { run: () => unknown }) => void,
 	projectId: string,
 	content: string,
 ): Promise<number> {
@@ -38,7 +39,7 @@ export async function cascadeDeleteNearDuplicates(
 	let deletedCount = 0;
 	for (const mem of candidates) {
 		if (mem.content && jaccardSimilarity(content, mem.content) > 0.6) {
-			await dbCtx.delete(memories).where(eq(memories.id, mem.id)).run();
+			addStmt(dbCtx.delete(memories).where(eq(memories.id, mem.id)));
 			deletedCount++;
 		}
 	}
@@ -336,7 +337,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 					.where(eq(memories.id, id));
 				addStmt(archiveStmt);
 				if (row.projectId && row.content) {
-					await cascadeDeleteNearDuplicates(dbOrTx, row.projectId, row.content);
+					await cascadeDeleteNearDuplicates(dbOrTx, addStmt, row.projectId, row.content);
 				}
 			});
 			return c.json({ ok: true }, 200);

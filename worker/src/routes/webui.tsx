@@ -313,7 +313,7 @@ export function createWebUiRoute(
 						.where(eq(memories.id, memId));
 					addStmt(archiveStmt);
 					if (row.content) {
-						await cascadeDeleteNearDuplicates(dbOrTx, row.projectId, row.content);
+						await cascadeDeleteNearDuplicates(dbOrTx, addStmt, row.projectId, row.content);
 					}
 				});
 			} else {
