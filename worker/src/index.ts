@@ -1,5 +1,5 @@
 import type { MessageBatch } from "@cloudflare/workers-types";
-import { drizzle } from "drizzle-orm/d1";
+import { createDatabaseFromEnv } from "./db";
 import { Hono } from "hono";
 import { bearerAuth, hybridAuth } from "./auth";
 import { createLoginRoute } from "./login";
@@ -144,7 +144,7 @@ async function scheduled(
 	env: { DB: D1Database; FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
 	_ctx: Pick<ExecutionContext, "waitUntil">,
 ): Promise<void> {
-	const db = drizzle(env.DB);
+	const db = createDatabaseFromEnv(env.DB);
 	await consolidate.runCronConsolidation(db, {
 		FIREWORKS_API_KEY: env.FIREWORKS_API_KEY ?? "",
 		FIREWORKS_MODEL: env.FIREWORKS_MODEL ?? "",

@@ -14,7 +14,7 @@ bun test --watch    # Watch mode
 
 ## Test coverage
 
-- **Worker routes**: ingest, context, consolidate, memories, web UI — mocked Firepass, in-memory D1
+- **Worker routes**: ingest, context, consolidate, memories, web UI — mocked Firepass, `BunSQLiteAdapter` via `createTestDb()` (in-memory SQLite, not D1)
 - **Plugin hooks**: SessionEnd conversation extraction, SessionStart context injection
 - **CLI**: JSONL parsing, batch logic, error handling
 - **Auth**: API key, cookie, CSRF
@@ -26,7 +26,7 @@ bun test --watch    # Watch mode
 bun run --filter @divmemory/worker test:cf
 ```
 
-Uses `@cloudflare/vitest-pool-workers` to test against a real local D1 binding.
+Uses `@cloudflare/vitest-pool-workers` with `D1DrizzleAdapter` against a real local D1 binding. See [Database layer](/development/database/) for adapter details.
 
 ## End-to-end tests
 

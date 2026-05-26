@@ -1,6 +1,6 @@
 import type { Message, MessageBatch } from "@cloudflare/workers-types";
 import { and, eq, sql } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/bun-sqlite";
+import type { Database } from "../db";
 import * as fc from "fast-check";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -38,7 +38,7 @@ class MockQueue {
 
 const mockQueue = new MockQueue();
 
-function createIngestApp(db: ReturnType<typeof drizzle>) {
+function createIngestApp(db: Database) {
 	const app = new Hono<{
 		Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string; INGEST_QUEUE: MockQueue };
 	}>();
@@ -65,7 +65,7 @@ function authHeaders() {
 }
 
 function createIngestAppWithMock(
-	db: ReturnType<typeof drizzle>,
+	db: Database,
 	opts?: { getEnv?: (c: unknown) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
 ) {
 	const app = new Hono<{

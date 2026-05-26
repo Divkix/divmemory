@@ -1,12 +1,8 @@
 import { and, desc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
-import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
+import { createDatabaseFromEnv } from "../db";
+import type { Database } from "../db";
 import { TOPIC_LABELS, TOPIC_ORDER, type TopicId } from "../lib/topics";
 import { GLOBAL_PROJECT_ID, memories, projects } from "../schema";
-
-/* ───────── types ───────── */
-
-type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
 
 const DEFAULT_MAX_CHARS = 12000;
 const MIN_CHARS_PER_TOPIC = 500;
@@ -17,7 +13,7 @@ const GLOBAL_BUDGET_FRACTION = 0.25;
 /* ───────── helpers ───────── */
 
 function getDb(c: { env: { DB: D1Database } }) {
-	return drizzle(c.env.DB);
+	return createDatabaseFromEnv(c.env.DB);
 }
 
 function nowISO(): string {
@@ -120,7 +116,7 @@ function truncateContext(
 /* ───────── route ───────── */
 
 // biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive
-export function createContextRoute(app: any, db?: DbLike) {
+export function createContextRoute(app: any, db?: Database) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types vary across runtimes
 	app.get("/context", async (c: any) => {
 		const projectId = c.req.query("project");
@@ -140,38 +136,25 @@ export function createContextRoute(app: any, db?: DbLike) {
 		const dbCtx = db || getDb(c);
 
 		// Fetch project info if it exists
-		const project = (await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get()) as
-			| { id: string; name: string | null }
-			| undefined;
+		const project = await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get();
 
 		const projectName = project?.name || projectId.split("/").pop() || projectId;
 
 		// Fetch active memories for the requested project
-		const rows = (await dbCtx
+		const rows = await dbCtx
 			.select()
 			.from(memories)
 			.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
 			.orderBy(desc(memories.curated), desc(memories.updatedAt))
-			.all()) as Array<{
-			id: string;
-			projectId: string;
-			topic: string | null;
-			content: string | null;
-			curated: number | null;
-			updatedAt: string | null;
-		}>;
+			.all();
 
 		// Also fetch global memories (cross-project developer preferences)
-		const globalRows = (await dbCtx
+		const globalRows = await dbCtx
 			.select()
 			.from(memories)
 			.where(and(eq(memories.projectId, GLOBAL_PROJECT_ID), eq(memories.status, "active")))
 			.orderBy(desc(memories.curated), desc(memories.updatedAt))
-			.all()) as Array<{
-			id: string;
-			content: string | null;
-			updatedAt: string | null;
-		}>;
+			.all();
 
 		// Extract global fact content
 		const globalFacts: Array<{ content: string }> = [];

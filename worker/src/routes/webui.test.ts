@@ -1,5 +1,5 @@
-import type { Database } from "bun:sqlite";
-import type { drizzle } from "drizzle-orm/bun-sqlite";
+import type { Database as SqliteDatabase } from "bun:sqlite";
+import type { Database } from "../db";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { hybridAuth, rateLimitStore } from "../auth";
@@ -13,7 +13,7 @@ const COOKIE_SECRET = "test-cookie-secret-789";
 const TEST_API_KEY = "test-api-key-123";
 
 // biome-ignore lint/suspicious/noExplicitAny: test-only helper returning app with patched fetch
-function createTestApp(db: ReturnType<typeof drizzle>, _sqlite: Database): any {
+function createTestApp(db: Database, _sqlite: SqliteDatabase): any {
 	const app = new Hono<{
 		Bindings: {
 			DB: typeof db;
@@ -153,7 +153,7 @@ async function postForm(
 
 let _seedCounter = 0;
 
-function seedProject(sqlite: Database, projectId: string, name?: string, sessionCount?: number) {
+function seedProject(sqlite: SqliteDatabase, projectId: string, name?: string, sessionCount?: number) {
 	sqlite.run(
 		"INSERT OR IGNORE INTO projects (id, name, session_count, created_at, last_seen) VALUES (?, ?, ?, ?, ?)",
 		projectId,
@@ -165,7 +165,7 @@ function seedProject(sqlite: Database, projectId: string, name?: string, session
 }
 
 function seedSession(
-	sqlite: Database,
+	sqlite: SqliteDatabase,
 	projectId: string,
 	overrides: {
 		id?: string;
@@ -189,7 +189,7 @@ function seedSession(
 }
 
 function seedMemory(
-	sqlite: Database,
+	sqlite: SqliteDatabase,
 	projectId: string,
 	content: string,
 	overrides: {
@@ -223,7 +223,7 @@ function seedMemory(
 
 describe("Web UI — Login", () => {
 	let testDb: ReturnType<typeof createTestDb>;
-	let sqlite: Database;
+	let sqlite: SqliteDatabase;
 	let app: ReturnType<typeof createTestApp>;
 
 	beforeEach(() => {
@@ -303,7 +303,7 @@ describe("Web UI — Login", () => {
 
 describe("Web UI — Main Page", () => {
 	let testDb: ReturnType<typeof createTestDb>;
-	let sqlite: Database;
+	let sqlite: SqliteDatabase;
 	let app: ReturnType<typeof createTestApp>;
 
 	beforeEach(() => {
@@ -763,7 +763,7 @@ describe("Web UI — Main Page", () => {
 
 describe("Web UI — Document Structure", () => {
 	let testDb: ReturnType<typeof createTestDb>;
-	let sqlite: Database;
+	let sqlite: SqliteDatabase;
 	let app: ReturnType<typeof createTestApp>;
 
 	beforeEach(() => {
@@ -848,7 +848,7 @@ describe("Web UI — Document Structure", () => {
 
 describe("Web UI — Accessibility", () => {
 	let testDb: ReturnType<typeof createTestDb>;
-	let sqlite: Database;
+	let sqlite: SqliteDatabase;
 	let app: ReturnType<typeof createTestApp>;
 
 	beforeEach(() => {
@@ -916,7 +916,7 @@ describe("Web UI — Accessibility", () => {
 
 describe("Web UI — HTTP Headers & Response Codes", () => {
 	let testDb: ReturnType<typeof createTestDb>;
-	let sqlite: Database;
+	let sqlite: SqliteDatabase;
 	let app: ReturnType<typeof createTestApp>;
 
 	beforeEach(() => {
@@ -977,7 +977,7 @@ describe("Web UI — HTTP Headers & Response Codes", () => {
 
 describe("Web UI — Long Content & Edge Cases", () => {
 	let testDb: ReturnType<typeof createTestDb>;
-	let sqlite: Database;
+	let sqlite: SqliteDatabase;
 	let app: ReturnType<typeof createTestApp>;
 
 	beforeEach(() => {
@@ -1049,7 +1049,7 @@ describe("Web UI — Long Content & Edge Cases", () => {
 
 describe("Web UI — Misc Cosmetic", () => {
 	let testDb: ReturnType<typeof createTestDb>;
-	let sqlite: Database;
+	let sqlite: SqliteDatabase;
 	let app: ReturnType<typeof createTestApp>;
 
 	beforeEach(() => {

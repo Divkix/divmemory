@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/bun-sqlite";
+import type { Database } from "../db";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
@@ -32,7 +32,7 @@ function makeFailingMockExtractor() {
 }
 
 function createConsolidateApp(
-	db: ReturnType<typeof drizzle>,
+	db: Database,
 	extractor?: (
 		prompt: string,
 		apiKey: string,

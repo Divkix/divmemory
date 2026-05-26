@@ -1,4 +1,4 @@
-import type { drizzle } from "drizzle-orm/bun-sqlite";
+import type { Database } from "../db";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
@@ -7,7 +7,7 @@ import { createStatusRoute } from "./status";
 
 const TEST_API_KEY = "test-api-key-123";
 
-function createStatusApp(db: ReturnType<typeof drizzle>) {
+function createStatusApp(db: Database) {
 	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();
 	app.use("/status", bearerAuth("divmemory_session"));
 	createStatusRoute(app, db);

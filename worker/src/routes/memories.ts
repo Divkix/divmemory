@@ -1,7 +1,6 @@
 import { and, desc, eq, like, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
-import type { DbLike } from "../lib/db";
-import { runAtomic } from "../lib/db";
+import { createDatabaseFromEnv, normalizeWriteResult } from "../db";
+import type { Database } from "../db";
 import { isValidTopic, VALID_TOPICS } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
 import { memories, projects, sessions } from "../schema";
@@ -9,7 +8,7 @@ import { memories, projects, sessions } from "../schema";
 /* ───────── helpers ───────── */
 
 function getDb(c: { env: { DB: D1Database } }) {
-	return drizzle(c.env.DB);
+	return createDatabaseFromEnv(c.env.DB);
 }
 
 function nowISO(): string {
@@ -19,12 +18,12 @@ function nowISO(): string {
 /** Hard-delete auto-extracted near-duplicates of an archived curated fact.
  *  Returns the count of deleted memories. */
 export async function cascadeDeleteNearDuplicates(
-	dbCtx: DbLike,
-	addStmt: (q: { run: () => unknown }) => void,
+	dbCtx: Database,
+	collect: (q: { run: () => unknown }) => void,
 	projectId: string,
 	content: string,
 ): Promise<number> {
-	const candidates = (await dbCtx
+	const candidates = await dbCtx
 		.select()
 		.from(memories)
 		.where(
@@ -34,12 +33,12 @@ export async function cascadeDeleteNearDuplicates(
 				eq(memories.curated, 0),
 			),
 		)
-		.all()) as Array<{ id: string; content: string | null }>;
+		.all();
 
 	let deletedCount = 0;
 	for (const mem of candidates) {
 		if (mem.content && jaccardSimilarity(content, mem.content) > 0.6) {
-			addStmt(dbCtx.delete(memories).where(eq(memories.id, mem.id)));
+			collect(dbCtx.delete(memories).where(eq(memories.id, mem.id)));
 			deletedCount++;
 		}
 	}
@@ -49,7 +48,7 @@ export async function cascadeDeleteNearDuplicates(
 /* ───────── route ───────── */
 
 // biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive for our use case
-export function createMemoriesRoute(app: any, db?: DbLike) {
+export function createMemoriesRoute(app: any, db?: Database) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types vary across runtimes
 	app.post("/memories", async (c: any) => {
 		const dbCtx = db || getDb(c);
@@ -82,11 +81,11 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const projectId = body.project_id;
 		const content = body.content as string;
 
-		const existingRows = (await dbCtx
+		const existingRows = await dbCtx
 			.select()
 			.from(memories)
 			.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-			.all()) as Array<{ id: string; content: string | null }>;
+			.all();
 		for (const row of existingRows) {
 			if (row.content && jaccardSimilarity(body.content.trim(), row.content) > 0.6) {
 				await dbCtx
@@ -109,15 +108,13 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const sessionId = `manual:${memoryId}`;
 
 		// Atomic: project upsert → session insert → memory insert
-		await runAtomic(dbCtx, async (tx, addStmt) => {
-			const project = (await tx.select().from(projects).where(eq(projects.id, projectId)).get()) as
-				| { id: string }
-				| undefined;
+		const project = await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get();
+		await dbCtx.atomic(async (collect) => {
 			if (project) {
-				addStmt(tx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)));
+				collect(dbCtx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)));
 			} else {
-				addStmt(
-					tx.insert(projects).values({
+				collect(
+					dbCtx.insert(projects).values({
 						id: projectId,
 						name: body.project_name || projectId.split("/").pop() || projectId,
 						sessionCount: 0,
@@ -126,8 +123,8 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 					}),
 				);
 			}
-			addStmt(
-				tx.insert(sessions).values({
+			collect(
+				dbCtx.insert(sessions).values({
 					id: sessionId,
 					projectId,
 					source: "manual-add",
@@ -139,8 +136,8 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 					createdAt: now,
 				}),
 			);
-			addStmt(
-				tx.insert(memories).values({
+			collect(
+				dbCtx.insert(memories).values({
 					id: memoryId,
 					projectId,
 					sourceSession: sessionId,
@@ -212,9 +209,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 			const pid = row.projectId;
 			if (!projectMap.has(pid)) {
 				// Fetch project name
-				const proj = (await dbCtx.select().from(projects).where(eq(projects.id, pid)).get()) as
-					| { id: string; name: string | null }
-					| undefined;
+				const proj = await dbCtx.select().from(projects).where(eq(projects.id, pid)).get();
 				projectMap.set(pid, {
 					id: pid,
 					name: proj?.name || pid.split("/").pop() || pid,
@@ -294,16 +289,13 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		}
 
 		// Check if memory exists
-		const existing = (await dbCtx.select().from(memories).where(eq(memories.id, id)).get()) as
-			| { id: string }
-			| undefined;
+		const existing = await dbCtx.select().from(memories).where(eq(memories.id, id)).get();
 		if (!existing) {
 			return c.json({ error: "Memory not found" }, 404);
 		}
 
 		const updateResult = await dbCtx.update(memories).set(set).where(eq(memories.id, id)).run();
-		const updated = updateResult as { rowsAffected?: number; changes?: number };
-		if ((updated.rowsAffected ?? updated.changes ?? 0) === 0) {
+		if (normalizeWriteResult(updateResult).changes === 0) {
 			return c.json({ error: "Memory not found" }, 404);
 		}
 
@@ -315,9 +307,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const dbCtx = db || getDb(c);
 		const id = c.req.param("id") as string;
 
-		const row = (await dbCtx.select().from(memories).where(eq(memories.id, id)).get()) as
-			| { id: string; curated: number; status: string; projectId: string; content: string | null }
-			| undefined;
+		const row = await dbCtx.select().from(memories).where(eq(memories.id, id)).get();
 
 		if (!row) {
 			return c.json({ error: "Memory not found" }, 404);
@@ -330,14 +320,15 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 
 		if (row.curated === 1) {
 			// Soft-archive curated facts atomically with cascade
-			await runAtomic(dbCtx, async (dbOrTx, addStmt) => {
-				const archiveStmt = dbOrTx
-					.update(memories)
-					.set({ status: "archived", updatedAt: nowISO() })
-					.where(eq(memories.id, id));
-				addStmt(archiveStmt);
+			await dbCtx.atomic(async (collect) => {
+				collect(
+					dbCtx
+						.update(memories)
+						.set({ status: "archived", updatedAt: nowISO() })
+						.where(eq(memories.id, id)),
+				);
 				if (row.projectId && row.content) {
-					await cascadeDeleteNearDuplicates(dbOrTx, addStmt, row.projectId, row.content);
+					await cascadeDeleteNearDuplicates(dbCtx, collect, row.projectId, row.content);
 				}
 			});
 			return c.json({ ok: true }, 200);
@@ -345,8 +336,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 
 		// Hard-delete auto-extracted (curated=0) regardless of current status
 		const deleteResult = await dbCtx.delete(memories).where(eq(memories.id, id)).run();
-		const deleted = deleteResult as { rowsAffected?: number; changes?: number };
-		if ((deleted.rowsAffected ?? deleted.changes ?? 0) === 0) {
+		if (normalizeWriteResult(deleteResult).changes === 0) {
 			return c.json({ error: "Memory not found" }, 404);
 		}
 		return c.json({ ok: true }, 200);

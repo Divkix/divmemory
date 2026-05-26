@@ -1,22 +1,21 @@
 /** @jsxImportSource hono/jsx */
 import { and, desc, eq, like, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { isSecureContext, verifyCookie } from "../auth";
 import { generateCsrfToken, verifyCsrfToken } from "../csrf";
-import { runAtomic } from "../lib/db";
+import { createDatabaseFromEnv } from "../db";
+import type { Database, MemoryRow, SessionRow } from "../db";
 import { memories, projects, sessions } from "../schema";
 import { LoginPage, MainPage } from "../webui/components";
-import type { DbLike, MemoryRow, SessionRow } from "../webui/types";
 import * as consolidate from "./consolidate";
 import { cascadeDeleteNearDuplicates } from "./memories";
 
 const SESSION_COOKIE = "divmemory_session";
 
-function getDb(c: Context, db?: DbLike): DbLike {
+function getDb(c: Context, db?: Database): Database {
 	if (db) return db;
-	return drizzle(c.env.DB as unknown as D1Database);
+	return createDatabaseFromEnv(c.env.DB as unknown as D1Database);
 }
 
 function webCookieSecret(c: Context): string {
@@ -81,7 +80,7 @@ async function validateCsrf(c: Context): Promise<boolean> {
 export function createWebUiRoute(
 	// biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive
 	app: any,
-	db?: DbLike,
+	db?: Database,
 ) {
 	/* ── GET login ── */
 	app.get("/login", async (c: Context) => {
@@ -105,12 +104,7 @@ export function createWebUiRoute(
 		const error = c.req.query("error") || "";
 
 		// Fetch all projects for sidebar
-		const allProjectsRaw = (await dbCtx.select().from(projects).all()) as {
-			id: string;
-			name: string | null;
-			sessionCount: number | null;
-			lastSeen: string | null;
-		}[];
+		const allProjectsRaw = await dbCtx.select().from(projects).all();
 		allProjectsRaw.sort((a, b) => (b.lastSeen ?? "").localeCompare(a.lastSeen ?? ""));
 
 		let currentProject:
@@ -141,34 +135,34 @@ export function createWebUiRoute(
 			if (searchQuery.trim()) {
 				conditions.push(like(sql`lower(${memories.content})`, `%${searchQuery.toLowerCase()}%`));
 			}
-			memRows = (await dbCtx
+			memRows = await dbCtx
 				.select()
 				.from(memories)
 				.where(and(...conditions))
 				.orderBy(desc(memories.updatedAt))
-				.all()) as unknown as MemoryRow[];
+				.all();
 
-			sessionRows = (await dbCtx
+			sessionRows = await dbCtx
 				.select()
 				.from(sessions)
 				.where(eq(sessions.projectId, queriedProjectId))
 				.orderBy(desc(sessions.createdAt))
 				.limit(20)
-				.all()) as unknown as SessionRow[];
+				.all();
 
-			const ucResult = (await dbCtx
+			const ucResult = await dbCtx
 				.select({ count: sql<number>`count(*)` })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, queriedProjectId), eq(sessions.consolidated, 0)))
-				.get()) as { count: number } | undefined;
+				.get();
 			unconsolidatedCount = ucResult?.count ?? 0;
 
-			const activeResult = (await dbCtx
+			const activeResult = await dbCtx
 				.select({ count: sql<number>`count(*)` })
 				.from(memories)
 				.where(and(eq(memories.projectId, queriedProjectId), eq(memories.status, "active")))
-				.get()) as { count: number } | undefined;
-			const curatedResult = (await dbCtx
+				.get();
+			const curatedResult = await dbCtx
 				.select({ count: sql<number>`count(*)` })
 				.from(memories)
 				.where(
@@ -178,12 +172,12 @@ export function createWebUiRoute(
 						eq(memories.curated, 1),
 					),
 				)
-				.get()) as { count: number } | undefined;
-			const errorResult = (await dbCtx
+				.get();
+			const errorResult = await dbCtx
 				.select({ count: sql<number>`count(*)` })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, queriedProjectId), eq(sessions.consolidated, -1)))
-				.get()) as { count: number } | undefined;
+				.get();
 			statusStats = {
 				activeMemories: activeResult?.count ?? 0,
 				curatedMemories: curatedResult?.count ?? 0,
@@ -273,11 +267,7 @@ export function createWebUiRoute(
 		// Edit memory
 		if (methodOverride === "PATCH" && body.edit) {
 			const memId = String(body.edit);
-			const existing = (await dbCtx
-				.select()
-				.from(memories)
-				.where(eq(memories.id, memId))
-				.get()) as unknown as MemoryRow | undefined;
+			const existing = await dbCtx.select().from(memories).where(eq(memories.id, memId)).get();
 			if (!existing) {
 				return c.redirect(`/?project=${encodeURIComponent(projectId)}&error=Memory+not+found`, 302);
 			}
@@ -295,25 +285,20 @@ export function createWebUiRoute(
 		// Delete memory
 		if (methodOverride === "DELETE" && body.delete) {
 			const memId = String(body.delete);
-			const row = (await dbCtx
-				.select()
-				.from(memories)
-				.where(eq(memories.id, memId))
-				.get()) as unknown as
-				| (MemoryRow & { projectId: string; content: string | null })
-				| undefined;
+			const row = await dbCtx.select().from(memories).where(eq(memories.id, memId)).get();
 			if (!row) {
 				return c.redirect(`/?project=${encodeURIComponent(projectId)}&error=Memory+not+found`, 302);
 			}
 			if (row.curated === 1) {
-				await runAtomic(dbCtx, async (dbOrTx, addStmt) => {
-					const archiveStmt = dbOrTx
-						.update(memories)
-						.set({ status: "archived", updatedAt: new Date().toISOString() })
-						.where(eq(memories.id, memId));
-					addStmt(archiveStmt);
+				await dbCtx.atomic(async (collect) => {
+					collect(
+						dbCtx
+							.update(memories)
+							.set({ status: "archived", updatedAt: new Date().toISOString() })
+							.where(eq(memories.id, memId)),
+					);
 					if (row.content) {
-						await cascadeDeleteNearDuplicates(dbOrTx, addStmt, row.projectId, row.content);
+						await cascadeDeleteNearDuplicates(dbCtx, collect, row.projectId, row.content);
 					}
 				});
 			} else {

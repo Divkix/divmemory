@@ -4,15 +4,18 @@ Full docs: https://divmemory-docs.divkix.workers.dev
 
 ## Project Structure
 
-This is a Bun monorepo with three workspaces:
+This is a Bun monorepo with four workspaces:
 
 ```
 worker/   — Cloudflare Worker (Hono + D1 + Drizzle), web UI, and REST API
 plugin/   — Factory Droid plugin (scripts, commands, skills)
 cli/      — Bootstrap CLI for project setup
+docs/     — Starlight documentation site (deployed separately)
 e2e/      — Playwright end-to-end tests
 specs/    — Feature specifications
 ```
+
+Worker database access uses the typed seam in `worker/src/db/` (`Database`, `D1DrizzleAdapter`, `BunSQLiteAdapter`, `InMemoryAdapter`).
 
 Source code lives in `src/` within each workspace. Tests are co-located (`*.test.ts`) or in a `tests/` directory.
 

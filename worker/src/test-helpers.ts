@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
+import { BunSQLiteAdapter } from "./db/bun-sqlite-adapter";
+import type { Database as Db } from "./db/types";
 
-/** Build an in-memory SQLite DB wrapped by Drizzle for tests.
- *  Creates all tables, indexes, and returns the raw sqlite handle + drizzle db. */
-export function createTestDb() {
+/** Build an in-memory SQLite DB wrapped by the typed Database seam for tests. */
+export function createTestDb(): { sqlite: Database; db: Db } {
 	const sqlite = new Database(":memory:");
 	sqlite.exec("PRAGMA foreign_keys = ON;");
-	const db = drizzle(sqlite);
+	const adapter = new BunSQLiteAdapter(sqlite);
 	sqlite.exec(`
 		CREATE TABLE projects (
 			id TEXT PRIMARY KEY NOT NULL,
@@ -48,5 +48,5 @@ export function createTestDb() {
 		CREATE INDEX idx_memories_project_id_status ON memories (project_id, status);
 		CREATE INDEX idx_memories_project_id_consolidated_curated ON memories (project_id, consolidated, curated);
 	`);
-	return { sqlite, db };
+	return { sqlite, db: adapter.asDatabase() };
 }
