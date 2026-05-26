@@ -120,6 +120,12 @@ describe("schema definitions", () => {
 			expect(col?.default).toBe(0);
 		});
 
+		it("has consolidated default 0", () => {
+			const config = getTableConfig(memories);
+			const col = config.columns.find((c) => c.name === "consolidated");
+			expect(col?.default).toBe(0);
+		});
+
 		it("has status default 'active'", () => {
 			const config = getTableConfig(memories);
 			const col = config.columns.find((c) => c.name === "status");
@@ -155,6 +161,19 @@ describe("schema definitions", () => {
 			expect(idx?.config.columns.map((c) => (c as { name: string }).name)).toEqual([
 				"project_id",
 				"status",
+			]);
+		});
+
+		it("has a composite index on project_id + consolidated + curated", () => {
+			const config = getTableConfig(memories);
+			const idx = config.indexes.find(
+				(i) => i.config.name === "idx_memories_project_id_consolidated_curated",
+			);
+			expect(idx).toBeDefined();
+			expect(idx?.config.columns.map((c) => (c as { name: string }).name)).toEqual([
+				"project_id",
+				"consolidated",
+				"curated",
 			]);
 		});
 	});

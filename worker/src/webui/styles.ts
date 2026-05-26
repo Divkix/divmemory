@@ -17,6 +17,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;m
 .memory-meta{font-size:12px;color:#71717a;margin-bottom:8px}
 .memory-meta .badge{display:inline-block;padding:2px 6px;border-radius:4px;background:#f4f4f5;margin-right:6px}
 .memory-meta .badge.curated{background:#dcfce7;color:#166534}
+.memory-meta .badge.draft{background:#fef9c3;color:#854d0e}
 .memory-actions{display:flex;gap:8px;align-items:center}
 .memory-actions a{font-size:12px;color:#2563eb;text-decoration:none}
 .memory-actions button{font-size:12px;background:none;border:none;color:#dc2626;cursor:pointer;padding:2px 6px}

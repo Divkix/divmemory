@@ -8,6 +8,7 @@ export interface MemoryRow {
 	content: string | null;
 	confidence: number | null;
 	curated: number | null;
+	consolidated: number | null;
 	status: string | null;
 	createdAt: string | null;
 	updatedAt: string | null;

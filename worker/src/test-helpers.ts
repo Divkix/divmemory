@@ -38,6 +38,7 @@ export function createTestDb() {
 			content TEXT,
 			confidence REAL DEFAULT 0,
 			curated INTEGER DEFAULT 0,
+			consolidated INTEGER DEFAULT 0,
 			status TEXT DEFAULT 'active',
 			created_at TEXT,
 			updated_at TEXT,
@@ -45,6 +46,7 @@ export function createTestDb() {
 		);
 		CREATE INDEX idx_memories_project_id_topic ON memories (project_id, topic);
 		CREATE INDEX idx_memories_project_id_status ON memories (project_id, status);
+		CREATE INDEX idx_memories_project_id_consolidated_curated ON memories (project_id, consolidated, curated);
 	`);
 	return { sqlite, db };
 }

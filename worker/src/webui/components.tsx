@@ -206,6 +206,7 @@ export const MemoryCard: FC<{
 				<span class="badge">{topicLabel(topic)}</span>
 				<span class="badge">{confidencePercent(m.confidence)}</span>
 				{m.curated ? <span class="badge curated">Curated</span> : undefined}
+				{m.consolidated === 0 && !m.curated ? <span class="badge draft">Draft</span> : undefined}
 			</div>
 			{actions}
 		</div>
