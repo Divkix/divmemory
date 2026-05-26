@@ -1,4 +1,10 @@
+import { z } from "zod";
 import { recoverJSON } from "./utils";
+
+const ErrorPayloadSchema = z.object({
+	error: z.object({ message: z.string().optional() }).optional(),
+	message: z.string().optional(),
+});
 
 /* ───────── types ───────── */
 
@@ -63,8 +69,12 @@ export async function callFirepass(
 				const bodyText = await res.text();
 				let detail = res.statusText;
 				try {
-					const body = JSON.parse(bodyText) as { error?: { message?: string }; message?: string };
-					detail = body.error?.message ?? body.message ?? bodyText;
+					const parsed = ErrorPayloadSchema.safeParse(JSON.parse(bodyText));
+					if (parsed.success) {
+						detail = parsed.data.error?.message ?? parsed.data.message ?? bodyText;
+					} else {
+						detail = bodyText || res.statusText;
+					}
 				} catch {
 					detail = bodyText || res.statusText;
 				}
