@@ -814,4 +814,79 @@ describe("DELETE /memories/:id", () => {
 		const result = testDb.db.select().from(memories).where(eq(memories.id, id)).get();
 		expect(result).toBeUndefined();
 	});
+
+	it("archiving curated cascades to near-duplicate auto-extracted memories (VAL-API-080)", async () => {
+		const app = createMemoriesApp(testDb.db);
+		seedProject(sqlite, "cascade-proj");
+		const curatedId = seedMemory(
+			sqlite,
+			"cascade-proj",
+			"Use Vitest for unit testing in this project.",
+			{
+				curated: 1,
+				confidence: 1,
+			},
+		);
+		const nearDupId = seedMemory(
+			sqlite,
+			"cascade-proj",
+			"Use Vitest for unit testing in this repository project.",
+			{
+				curated: 0,
+				confidence: 0.8,
+			},
+		);
+		const unrelatedId = seedMemory(
+			sqlite,
+			"cascade-proj",
+			"The project uses Jest for integration tests.",
+			{
+				curated: 0,
+				confidence: 0.8,
+			},
+		);
+
+		const req = new Request(`http://localhost/memories/${curatedId}`, {
+			method: "DELETE",
+			headers: authHeaders(),
+		});
+		const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+		expect(res.status).toBe(200);
+
+		const curatedRow = testDb.db.select().from(memories).where(eq(memories.id, curatedId)).get() as
+			| { status: string }
+			| undefined;
+		expect(curatedRow?.status).toBe("archived");
+
+		const nearDupRow = testDb.db.select().from(memories).where(eq(memories.id, nearDupId)).get();
+		expect(nearDupRow).toBeUndefined();
+
+		const unrelatedRow = testDb.db
+			.select()
+			.from(memories)
+			.where(eq(memories.id, unrelatedId))
+			.get() as { status: string } | undefined;
+		expect(unrelatedRow?.status).toBe("active");
+	});
+
+	it("archiving curated with no auto-extracted near-duplicates behaves normally (VAL-API-081)", async () => {
+		const app = createMemoriesApp(testDb.db);
+		seedProject(sqlite, "no-cascade");
+		const curatedId = seedMemory(sqlite, "no-cascade", "A unique curated fact.", {
+			curated: 1,
+			confidence: 1,
+		});
+
+		const req = new Request(`http://localhost/memories/${curatedId}`, {
+			method: "DELETE",
+			headers: authHeaders(),
+		});
+		const res = await app.fetch(req, envVars() as unknown as Record<string, string>);
+		expect(res.status).toBe(200);
+
+		const curatedRow = testDb.db.select().from(memories).where(eq(memories.id, curatedId)).get() as
+			| { status: string }
+			| undefined;
+		expect(curatedRow?.status).toBe("archived");
+	});
 });

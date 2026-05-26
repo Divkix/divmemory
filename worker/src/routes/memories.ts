@@ -16,6 +16,36 @@ function nowISO(): string {
 	return new Date().toISOString();
 }
 
+/** Hard-delete auto-extracted near-duplicates of an archived curated fact.
+ *  Returns the count of deleted memories. */
+export async function cascadeDeleteNearDuplicates(
+	dbCtx: DbLike,
+	addStmt: (q: { run: () => unknown }) => void,
+	projectId: string,
+	content: string,
+): Promise<number> {
+	const candidates = (await dbCtx
+		.select()
+		.from(memories)
+		.where(
+			and(
+				eq(memories.projectId, projectId),
+				eq(memories.status, "active"),
+				eq(memories.curated, 0),
+			),
+		)
+		.all()) as Array<{ id: string; content: string | null }>;
+
+	let deletedCount = 0;
+	for (const mem of candidates) {
+		if (mem.content && jaccardSimilarity(content, mem.content) > 0.6) {
+			addStmt(dbCtx.delete(memories).where(eq(memories.id, mem.id)));
+			deletedCount++;
+		}
+	}
+	return deletedCount;
+}
+
 /* ───────── route ───────── */
 
 // biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive for our use case
@@ -286,7 +316,7 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		const id = c.req.param("id") as string;
 
 		const row = (await dbCtx.select().from(memories).where(eq(memories.id, id)).get()) as
-			| { id: string; curated: number; status: string }
+			| { id: string; curated: number; status: string; projectId: string; content: string | null }
 			| undefined;
 
 		if (!row) {
@@ -299,16 +329,17 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		}
 
 		if (row.curated === 1) {
-			// Soft-archive curated facts
-			const archiveResult = await dbCtx
-				.update(memories)
-				.set({ status: "archived", updatedAt: nowISO() })
-				.where(eq(memories.id, id))
-				.run();
-			const archived = archiveResult as { rowsAffected?: number; changes?: number };
-			if ((archived.rowsAffected ?? archived.changes ?? 0) === 0) {
-				return c.json({ error: "Memory not found" }, 404);
-			}
+			// Soft-archive curated facts atomically with cascade
+			await runAtomic(dbCtx, async (dbOrTx, addStmt) => {
+				const archiveStmt = dbOrTx
+					.update(memories)
+					.set({ status: "archived", updatedAt: nowISO() })
+					.where(eq(memories.id, id));
+				addStmt(archiveStmt);
+				if (row.projectId && row.content) {
+					await cascadeDeleteNearDuplicates(dbOrTx, addStmt, row.projectId, row.content);
+				}
+			});
 			return c.json({ ok: true }, 200);
 		}
 
