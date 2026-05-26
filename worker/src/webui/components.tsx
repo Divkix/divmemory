@@ -302,11 +302,11 @@ export const ProjectStatus: FC<{
 					<span class="value">{curatedMemories}</span>
 				</div>
 				<div class="status-item">
-					<span class="label">Pending extraction</span>
+					<span class="label">Pending consolidation</span>
 					<span class="value">{pendingSessions}</span>
 				</div>
 				<div class="status-item">
-					<span class="label">Extraction errors</span>
+					<span class="label">Extraction error sessions</span>
 					<span class="value">{errorSessions}</span>
 				</div>
 			</div>

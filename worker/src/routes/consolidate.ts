@@ -252,13 +252,14 @@ export async function runConsolidation(
 		);
 
 		/* 4. Call Firepass */
-		const extracted = extractor
-			? await extractor(prompt, apiKey, model)
-			: (await callFirepass(prompt, apiKey, model)).extracted;
+		const firepassResult = extractor
+			? { extracted: await extractor(prompt, apiKey, model), rawResponse: null, error: undefined }
+			: await callFirepass(prompt, apiKey, model);
+		const extracted = firepassResult.extracted;
 
 		if (!extracted) {
-			// Firepass failure: leave sessions unchanged (pending stay 0, error stay -1)
-			return { consolidated: 0, archived: 0, error: "Firepass consolidation failed" };
+			const detail = firepassResult.error ?? "unknown";
+			return { consolidated: 0, archived: 0, error: `Firepass consolidation failed (${detail})` };
 		}
 
 		/* 5. Dedup and merge consolidated facts, then mark sessions (all atomic) */

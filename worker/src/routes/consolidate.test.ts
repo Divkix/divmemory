@@ -458,7 +458,7 @@ describe("runConsolidation — units", () => {
 				},
 				makeFailingMockExtractor(),
 			);
-			expect(result.error).toBe("Firepass consolidation failed");
+			expect(result.error).toMatch(/^Firepass consolidation failed/);
 			const rows = testDb.db
 				.select()
 				.from(sessions)
@@ -488,7 +488,7 @@ describe("runConsolidation — units", () => {
 				},
 				makeFailingMockExtractor(),
 			);
-			expect(result.error).toBe("Firepass consolidation failed");
+			expect(result.error).toMatch(/^Firepass consolidation failed/);
 			const rows = testDb.db
 				.select()
 				.from(sessions)
