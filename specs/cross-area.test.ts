@@ -52,6 +52,7 @@ function createTestDb() {
 			content TEXT,
 			confidence REAL DEFAULT 0,
 			curated INTEGER DEFAULT 0,
+			consolidated INTEGER DEFAULT 0,
 			status TEXT DEFAULT 'active',
 			created_at TEXT,
 			updated_at TEXT,
@@ -59,6 +60,7 @@ function createTestDb() {
 		);
 		CREATE INDEX idx_memories_project_id_topic ON memories (project_id, topic);
 		CREATE INDEX idx_memories_project_id_status ON memories (project_id, status);
+		CREATE INDEX idx_memories_project_id_consolidated_curated ON memories (project_id, consolidated, curated);
 	`);
 	return { sqlite, db };
 }
@@ -161,6 +163,7 @@ function seedMemory(
 			content,
 			confidence: 0.9,
 			curated: 0,
+			consolidated: 0,
 			status: "active",
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
