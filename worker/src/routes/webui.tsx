@@ -5,6 +5,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { isSecureContext, verifyCookie } from "../auth";
 import { generateCsrfToken, verifyCsrfToken } from "../csrf";
+import { runAtomic } from "../lib/db";
 import { memories, projects, sessions } from "../schema";
 import { LoginPage, MainPage } from "../webui/components";
 import type { DbLike, MemoryRow, SessionRow } from "../webui/types";
@@ -305,14 +306,16 @@ export function createWebUiRoute(
 				return c.redirect(`/?project=${encodeURIComponent(projectId)}&error=Memory+not+found`, 302);
 			}
 			if (row.curated === 1) {
-				await dbCtx
-					.update(memories)
-					.set({ status: "archived", updatedAt: new Date().toISOString() })
-					.where(eq(memories.id, memId))
-					.run();
-				if (row.content) {
-					await cascadeDeleteNearDuplicates(dbCtx, row.projectId, row.content);
-				}
+				await runAtomic(dbCtx, async (dbOrTx, addStmt) => {
+					const archiveStmt = dbOrTx
+						.update(memories)
+						.set({ status: "archived", updatedAt: new Date().toISOString() })
+						.where(eq(memories.id, memId));
+					addStmt(archiveStmt);
+					if (row.content) {
+						await cascadeDeleteNearDuplicates(dbOrTx, row.projectId, row.content);
+					}
+				});
 			} else {
 				await dbCtx.delete(memories).where(eq(memories.id, memId)).run();
 			}
