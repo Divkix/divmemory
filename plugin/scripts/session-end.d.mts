@@ -6,5 +6,6 @@ export function processSessionEnd(
 		stderr?: (s: string) => void;
 		stdout?: (s: string) => void;
 		fetch?: (url: string, init: RequestInit) => Promise<Response>;
+		transcriptRetryMs?: number;
 	},
 ): Promise<{ exitCode: number }>;
