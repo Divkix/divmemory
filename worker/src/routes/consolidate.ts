@@ -401,18 +401,20 @@ export async function runConsolidation(
 					);
 				}
 
-				// Delete old global draft memories when this pass produced global facts
-				addStmt(
-					tx
-						.delete(memories)
-						.where(
-							and(
-								eq(memories.projectId, GLOBAL_PROJECT_ID),
-								eq(memories.curated, 0),
-								eq(memories.consolidated, 0),
+				// Only delete global drafts when this pass legitimately touched global
+				if (mayTouchGlobal) {
+					addStmt(
+						tx
+							.delete(memories)
+							.where(
+								and(
+									eq(memories.projectId, GLOBAL_PROJECT_ID),
+									eq(memories.curated, 0),
+									eq(memories.consolidated, 0),
+								),
 							),
-						),
-				);
+					);
+				}
 
 				for (const s of allSessions) {
 					if (includedSessionIds.includes(s.id)) {
