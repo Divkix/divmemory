@@ -1,7 +1,7 @@
-import type { Database } from "../db";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
+import type { Database } from "../db";
 import { createTestDb } from "../test-helpers";
 import { createStatusRoute } from "./status";
 

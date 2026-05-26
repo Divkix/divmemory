@@ -1,9 +1,9 @@
 import { and, eq } from "drizzle-orm";
-import type { Database } from "../db";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
 import { csrfValidate } from "../csrf";
+import type { Database } from "../db";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";
 import {

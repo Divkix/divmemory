@@ -1,8 +1,8 @@
 /** @jsxImportSource hono/jsx */
 import type { FC, PropsWithChildren } from "hono/jsx";
+import type { MemoryRow, SessionRow } from "../db";
 import { TOPIC_LABELS, TOPIC_ORDER, type TopicId, VALID_TOPICS } from "../lib/topics";
 import { GLOBAL_CSS } from "./styles";
-import type { MemoryRow, SessionRow } from "../db";
 
 export function topicLabel(topic: string | null): string {
 	return TOPIC_LABELS[(topic || "general") as TopicId] || "General";

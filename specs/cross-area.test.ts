@@ -8,12 +8,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { sendIngest } from "../cli/src/cli";
 import { bearerAuth } from "../worker/src/auth";
+import { BunSQLiteAdapter } from "../worker/src/db/testing";
+import type { Database } from "../worker/src/db/types";
 import { createConsolidateRoute } from "../worker/src/routes/consolidate";
 import { createContextRoute } from "../worker/src/routes/context";
 import { createIngestRoute } from "../worker/src/routes/ingest";
 import { memories, projects, sessions } from "../worker/src/schema";
-import { BunSQLiteAdapter } from "../worker/src/db/testing";
-import type { Database } from "../worker/src/db/types";
 
 const TEST_API_KEY = "test-api-key-123";
 const WORKER_URL = "http://localhost";
@@ -138,12 +138,7 @@ function restoreGlobalFetch() {
 }
 
 /** Seed a memory directly into the in-memory DB */
-function seedMemory(
-	db: Database,
-	projectId: string,
-	content: string,
-	topic = "general",
-) {
+function seedMemory(db: Database, projectId: string, content: string, topic = "general") {
 	const sessionId = crypto.randomUUID();
 	db.insert(sessions)
 		.values({

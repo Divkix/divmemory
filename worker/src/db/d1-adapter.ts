@@ -1,8 +1,7 @@
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "../schema";
-import type { AtomicStatement, CollectFn, DrizzleSchemaDb } from "./types";
+import type { AtomicStatement, CollectFn, Database, DrizzleSchemaDb } from "./types";
 import { wrapDatabase } from "./wrap";
-import type { Database } from "./types";
 
 /** D1 batch() allows at most 100 statements per call. */
 const D1_BATCH_LIMIT = 100;

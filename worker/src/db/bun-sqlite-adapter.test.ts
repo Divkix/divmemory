@@ -68,5 +68,4 @@ describe("BunSQLiteAdapter", () => {
 	});
 });
 
-describe("InMemoryAdapter", () => {
-});
+describe("InMemoryAdapter", () => {});

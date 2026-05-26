@@ -1,7 +1,7 @@
 import type { D1Database, ExecutionContext, MessageBatch } from "@cloudflare/workers-types";
 import { eq } from "drizzle-orm";
-import { createDatabaseFromEnv, isDatabase } from "../db";
 import type { Database } from "../db";
+import { createDatabaseFromEnv, isDatabase } from "../db";
 import {
 	extractFacts,
 	processExtractionAfter,

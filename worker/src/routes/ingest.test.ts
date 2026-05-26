@@ -1,10 +1,10 @@
 import type { Message, MessageBatch } from "@cloudflare/workers-types";
 import { and, eq, sql } from "drizzle-orm";
-import type { Database } from "../db";
 import * as fc from "fast-check";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
+import type { Database } from "../db";
 import type { QueueMessage } from "../queue/ingest-consumer";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";

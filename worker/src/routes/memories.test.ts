@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
-import type { Database } from "../db";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth, hybridAuth } from "../auth";
+import type { Database } from "../db";
 import { memories } from "../schema";
 import { createTestDb } from "../test-helpers";
 import { createMemoriesRoute } from "./memories";

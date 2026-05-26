@@ -1,8 +1,8 @@
 import type { Database as SqliteDatabase } from "bun:sqlite";
-import type { Database } from "../db";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { hybridAuth, rateLimitStore } from "../auth";
+import type { Database } from "../db";
 import { createLoginRoute } from "../login";
 import { createTestDb } from "../test-helpers";
 import { createMemoriesRoute } from "./memories";
@@ -153,7 +153,12 @@ async function postForm(
 
 let _seedCounter = 0;
 
-function seedProject(sqlite: SqliteDatabase, projectId: string, name?: string, sessionCount?: number) {
+function seedProject(
+	sqlite: SqliteDatabase,
+	projectId: string,
+	name?: string,
+	sessionCount?: number,
+) {
 	sqlite.run(
 		"INSERT OR IGNORE INTO projects (id, name, session_count, created_at, last_seen) VALUES (?, ?, ?, ?, ?)",
 		projectId,

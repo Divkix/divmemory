@@ -1,6 +1,6 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { createDatabaseFromEnv, normalizeWriteResult } from "../db";
 import type { Database } from "../db";
+import { createDatabaseFromEnv, normalizeWriteResult } from "../db";
 import { callFirepass } from "../lib/firepass";
 import { PREFERENCES_TOPIC } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";

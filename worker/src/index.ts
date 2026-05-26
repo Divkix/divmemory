@@ -1,7 +1,7 @@
 import type { MessageBatch } from "@cloudflare/workers-types";
-import { createDatabaseFromEnv } from "./db";
 import { Hono } from "hono";
 import { bearerAuth, hybridAuth } from "./auth";
+import { createDatabaseFromEnv } from "./db";
 import { createLoginRoute } from "./login";
 import type { QueueMessage } from "./queue/ingest-consumer";
 import { processIngestQueue } from "./queue/ingest-consumer";

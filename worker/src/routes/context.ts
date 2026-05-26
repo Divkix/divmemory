@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
-import { createDatabaseFromEnv } from "../db";
 import type { Database } from "../db";
+import { createDatabaseFromEnv } from "../db";
 import { TOPIC_LABELS, TOPIC_ORDER, type TopicId } from "../lib/topics";
 import { GLOBAL_PROJECT_ID, memories, projects } from "../schema";
 

@@ -1,6 +1,6 @@
 import { and, desc, eq, like, sql } from "drizzle-orm";
-import { createDatabaseFromEnv, normalizeWriteResult } from "../db";
 import type { Database } from "../db";
+import { createDatabaseFromEnv, normalizeWriteResult } from "../db";
 import { isValidTopic, VALID_TOPICS } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
 import { memories, projects, sessions } from "../schema";

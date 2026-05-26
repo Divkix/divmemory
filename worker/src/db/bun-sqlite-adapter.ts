@@ -1,9 +1,8 @@
 import type { Database as BunDatabase } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import * as schema from "../schema";
-import type { AtomicStatement, CollectFn, DrizzleSchemaDb } from "./types";
+import type { AtomicStatement, CollectFn, Database, DrizzleSchemaDb } from "./types";
 import { wrapDatabase } from "./wrap";
-import type { Database } from "./types";
 
 export function createBunSqliteClient(sqlite: BunDatabase): DrizzleSchemaDb {
 	return drizzle(sqlite, { schema }) as DrizzleSchemaDb;

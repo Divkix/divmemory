@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
-import { createDatabaseFromEnv } from "../db";
 import type { Database } from "../db";
+import { createDatabaseFromEnv } from "../db";
 import { PREFERENCES_TOPIC } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";

@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { createDatabaseFromEnv } from "../db";
 import type { Database } from "../db";
+import { createDatabaseFromEnv } from "../db";
 import { memories, projects, sessions } from "../schema";
 
 function getDb(c: { env: { DB: D1Database } }) {
