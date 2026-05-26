@@ -758,6 +758,22 @@ describe("session-end hook", () => {
 			expect(capturedStderr.join("")).toContain("Failed to read transcript");
 		});
 
+		it("respects small transcriptRetryMs budgets by not oversleeping", async () => {
+			const stdin = makeStdin({ transcript_path: join(tmpDir, "nonexistent.jsonl") });
+			process.env.DIVMEMORY_API_KEY = "test-key";
+			const fetchFn = mockFetch();
+			const start = Date.now();
+			const result = await processSessionEnd(stdin, {
+				fetch: fetchFn,
+				stderr: (s: string) => capturedStderr.push(s),
+				stdout: (s: string) => capturedStdout.push(s),
+				transcriptRetryMs: 50,
+			});
+			const duration = Date.now() - start;
+			expect(result.exitCode).toBe(0);
+			expect(duration).toBeLessThan(500); // Should easily be well under 500ms (typically ~50ms), rather than oversleeping 1000ms
+		});
+
 		it("exits 0 when DIVMEMORY_API_KEY is missing (VAL-PLUGIN-026)", async () => {
 			const stdin = makeStdin();
 			writeFileSync(

@@ -239,8 +239,9 @@ export async function processSessionEnd(stdinData, deps = {}) {
 			} catch (err) {
 				if (err.code !== "ENOENT") throw err;
 			}
-			if (Date.now() >= deadline) break;
-			await new Promise((r) => setTimeout(r, 1000));
+			const remaining = deadline - Date.now();
+			if (remaining <= 0) break;
+			await new Promise((r) => setTimeout(r, Math.min(1000, remaining)));
 		}
 		// Final attempt
 		const raw = await readFile(transcriptPath, "utf-8");
