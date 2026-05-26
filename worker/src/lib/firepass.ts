@@ -56,16 +56,22 @@ export async function callFirepass(
 					model,
 					messages: [{ role: "user", content: prompt }],
 					temperature: 0.1,
-					max_tokens: 4096,
 				}),
 				signal: controller.signal,
 			});
 			if (!res.ok) {
 				const bodyText = await res.text();
+				let detail = res.statusText;
+				try {
+					const body = JSON.parse(bodyText) as { error?: { message?: string }; message?: string };
+					detail = body.error?.message ?? body.message ?? bodyText;
+				} catch {
+					detail = bodyText || res.statusText;
+				}
 				return {
 					extracted: null,
 					rawResponse: bodyText,
-					error: `HTTP ${res.status}: ${res.statusText}`,
+					error: `HTTP ${res.status}: ${detail}`,
 				};
 			}
 			const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
