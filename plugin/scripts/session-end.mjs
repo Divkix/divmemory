@@ -225,10 +225,31 @@ export async function processSessionEnd(stdinData, deps = {}) {
 		stderr(`[divmemory] Warning: Failed to persist project mapping: ${err.message}`);
 	}
 
+	// Retry loop: Droid may fire the hook before the transcript is fully written.
+	// Retry for up to maxRetryMs, polling every second.
+	const maxRetryMs = deps.transcriptRetryMs ?? 30_000;
+	const readTranscriptWithRetry = async (transcriptPath) => {
+		const deadline = Date.now() + maxRetryMs;
+		while (true) {
+			try {
+				const raw = await readFile(transcriptPath, "utf-8");
+				if (raw.trim().length > 0) {
+					return extractConversation(raw);
+				}
+			} catch (err) {
+				if (err.code !== "ENOENT") throw err;
+			}
+			if (Date.now() >= deadline) break;
+			await new Promise((r) => setTimeout(r, 1000));
+		}
+		// Final attempt
+		const raw = await readFile(transcriptPath, "utf-8");
+		return extractConversation(raw);
+	};
+
 	let conversation = "";
 	try {
-		const transcriptContent = await readFile(transcript_path, "utf-8");
-		conversation = extractConversation(transcriptContent);
+		conversation = await readTranscriptWithRetry(transcript_path);
 	} catch (err) {
 		stderr(`[divmemory] Failed to read transcript: ${err.message}`);
 		// Continue with empty conversation; still POST so session is recorded

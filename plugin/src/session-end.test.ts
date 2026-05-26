@@ -752,6 +752,7 @@ describe("session-end hook", () => {
 				fetch: fetchFn,
 				stderr: (s: string) => capturedStderr.push(s),
 				stdout: (s: string) => capturedStdout.push(s),
+				transcriptRetryMs: 100,
 			});
 			expect(result.exitCode).toBe(0);
 			expect(capturedStderr.join("")).toContain("Failed to read transcript");
