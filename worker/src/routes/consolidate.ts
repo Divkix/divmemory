@@ -330,6 +330,7 @@ export async function runConsolidation(
 							.update(memories)
 							.set({
 								updatedAt: now,
+								consolidated: 1,
 								...(u.content !== undefined ? { content: u.content } : {}),
 								confidence: u.confidence,
 							})
@@ -347,6 +348,7 @@ export async function runConsolidation(
 							content: f.content,
 							confidence: f.confidence,
 							curated: 0,
+							consolidated: 1,
 							status: "active",
 							createdAt: now,
 							updatedAt: now,
@@ -354,12 +356,26 @@ export async function runConsolidation(
 					);
 				}
 
+				// Delete old draft memories for this project (curated=0, consolidated=0)
+				addStmt(
+					tx
+						.delete(memories)
+						.where(
+							and(
+								eq(memories.projectId, projectId),
+								eq(memories.curated, 0),
+								eq(memories.consolidated, 0),
+							),
+						),
+				);
+
 				for (const u of globalUpdates) {
 					addStmt(
 						tx
 							.update(memories)
 							.set({
 								updatedAt: now,
+								consolidated: 1,
 								...(u.content !== undefined ? { content: u.content } : {}),
 								confidence: u.confidence,
 							})
@@ -377,10 +393,26 @@ export async function runConsolidation(
 							content: f.content,
 							confidence: f.confidence,
 							curated: 0,
+							consolidated: 1,
 							status: "active",
 							createdAt: now,
 							updatedAt: now,
 						}),
+					);
+				}
+
+				// Only delete global drafts when this pass legitimately touched global
+				if (mayTouchGlobal) {
+					addStmt(
+						tx
+							.delete(memories)
+							.where(
+								and(
+									eq(memories.projectId, GLOBAL_PROJECT_ID),
+									eq(memories.curated, 0),
+									eq(memories.consolidated, 0),
+								),
+							),
 					);
 				}
 

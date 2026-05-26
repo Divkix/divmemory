@@ -45,6 +45,7 @@ export const memories = sqliteTable(
 		content: text("content"),
 		confidence: real("confidence").default(0.0),
 		curated: integer("curated").default(0),
+		consolidated: integer("consolidated").default(0),
 		status: text("status").default("active"),
 		createdAt: text("created_at"),
 		updatedAt: text("updated_at"),
@@ -56,5 +57,10 @@ export const memories = sqliteTable(
 		}),
 		index("idx_memories_project_id_topic").on(t.projectId, t.topic),
 		index("idx_memories_project_id_status").on(t.projectId, t.status),
+		index("idx_memories_project_id_consolidated_curated").on(
+			t.projectId,
+			t.consolidated,
+			t.curated,
+		),
 	],
 );

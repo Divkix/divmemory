@@ -22,7 +22,7 @@ export default defineConfig({
 		{ name: "mobile", use: { ...devices["Pixel 5"], viewport: { width: 390, height: 844 } } },
 	],
 	webServer: {
-		command: `cd worker && bun wrangler dev --config wrangler.e2e.jsonc --port ${basePort}`,
+		command: `cd worker && bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=../e2e/e2e-drop.sql && bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0000_giant_tyrannus.sql && bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0001_sloppy_punisher.sql && bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0002_add_consolidated_to_memories.sql && bun wrangler dev --config wrangler.e2e.jsonc --port ${basePort}`,
 		url: `${baseURL}/health`,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,

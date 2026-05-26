@@ -301,6 +301,7 @@ export async function processExtractionAfter(
 								content: f.content,
 								confidence: f.confidence,
 								curated: 0,
+								consolidated: 0,
 								status: "active",
 								createdAt: now,
 								updatedAt: now,

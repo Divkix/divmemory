@@ -15,6 +15,13 @@
       "when": 1779228735924,
       "tag": "0001_sloppy_punisher",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779812818077,
+      "tag": "0002_add_consolidated_to_memories",
+      "breakpoints": true
     }
   ]
 }

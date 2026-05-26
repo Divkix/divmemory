@@ -113,7 +113,7 @@ function seedMemory(
 		new Date().toISOString(),
 	);
 	sqlite.run(
-		"INSERT INTO memories (id, project_id, source_session, topic, content, confidence, curated, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO memories (id, project_id, source_session, topic, content, confidence, curated, consolidated, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		crypto.randomUUID(),
 		projectId,
 		sessionId,
@@ -121,6 +121,7 @@ function seedMemory(
 		content,
 		overrides?.confidence ?? 0.9,
 		overrides?.curated ?? 0,
+		overrides?.consolidated ?? 1,
 		overrides?.status ?? "active",
 		new Date().toISOString(),
 		overrides?.updatedAt ?? new Date().toISOString(),
@@ -212,18 +213,41 @@ describe("POST /consolidate", () => {
 			expect(json.ok).toBe(true);
 			expect(json.message?.toLowerCase()).toContain("nothing");
 		});
+
+		it("deletes draft memories (consolidated=0) after successful consolidation", async () => {
+			seedSessions(testDb.sqlite, "proj-drafts", 2);
+			seedMemory(testDb.sqlite, "proj-drafts", "Draft fact A", { consolidated: 0 });
+			seedMemory(testDb.sqlite, "proj-drafts", "Draft fact B", { consolidated: 0 });
+			const before = testDb.db
+				.select()
+				.from(memories)
+				.where(eq(memories.projectId, "proj-drafts"))
+				.all() as (typeof memories.$inferInsert)[];
+			expect(before).toHaveLength(2);
+
+			const app = createConsolidateApp(testDb.db, makeMockExtractor());
+			const req = new Request("http://localhost/consolidate", {
+				method: "POST",
+				headers: authHeaders(),
+				body: JSON.stringify({ project_id: "proj-drafts" }),
+			});
+			await app.fetch(req, envVars() as unknown as Record<string, string>);
+
+			const after = testDb.db
+				.select()
+				.from(memories)
+				.where(eq(memories.projectId, "proj-drafts"))
+				.all() as (typeof memories.$inferInsert)[];
+			// Old drafts should be gone; one refined fact from mock extractor remains
+			expect(after).toHaveLength(1);
+			expect(after[0]?.consolidated).toBe(1);
+		});
 	});
 
 	describe("curated fact protection", () => {
 		it("leaves curated=1 facts unchanged during consolidation", async () => {
 			seedSessions(testDb.sqlite, "proj-d", 2);
 			seedMemory(testDb.sqlite, "proj-d", "Curated fact one", { curated: 1, topic: "general" });
-			const before = testDb.db
-				.select()
-				.from(memories)
-				.where(eq(memories.projectId, "proj-d"))
-				.all() as { content: string }[];
-			expect(before[0].content).toBe("Curated fact one");
 			const app = createConsolidateApp(testDb.db, makeMockExtractor());
 			const req = new Request("http://localhost/consolidate", {
 				method: "POST",
@@ -235,8 +259,10 @@ describe("POST /consolidate", () => {
 				.select()
 				.from(memories)
 				.where(eq(memories.projectId, "proj-d"))
-				.all() as { content: string }[];
-			expect(after[0].content).toBe("Curated fact one");
+				.all() as { content: string; curated: number }[];
+			const curated = after.filter((m) => m.curated === 1);
+			expect(curated).toHaveLength(1);
+			expect(curated[0].content).toBe("Curated fact one");
 		});
 	});
 

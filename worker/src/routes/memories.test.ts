@@ -135,7 +135,7 @@ function seedMemory(
 	const sid = seedSession(sqlite, projectId);
 	const id = overrides?.id || crypto.randomUUID();
 	sqlite.run(
-		"INSERT INTO memories (id, project_id, source_session, topic, content, confidence, curated, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO memories (id, project_id, source_session, topic, content, confidence, curated, consolidated, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		id,
 		projectId,
 		sid,
@@ -143,6 +143,7 @@ function seedMemory(
 		content,
 		overrides?.confidence ?? 0.9,
 		overrides?.curated ?? 0,
+		1,
 		overrides?.status ?? "active",
 		new Date().toISOString(),
 		overrides?.updatedAt ?? new Date().toISOString(),
