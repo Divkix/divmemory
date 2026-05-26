@@ -198,7 +198,7 @@ export async function runConsolidation(
 
 	try {
 		const apiKey = env.FIREWORKS_API_KEY ?? "";
-		const model = env.FIREWORKS_MODEL ?? DEFAULT_FIREWORKS_MODEL;
+		const model = env.FIREWORKS_MODEL || DEFAULT_FIREWORKS_MODEL;
 		const now = new Date().toISOString();
 
 		/* 1. Read unconsolidated + error-flagged sessions */

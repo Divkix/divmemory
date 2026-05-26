@@ -35,7 +35,7 @@ export async function processIngestQueue(
 	const dbCtx = "select" in env.DB ? env.DB : drizzle(env.DB as D1Database);
 
 	const fwKey = env.FIREWORKS_API_KEY ?? "";
-	const fwModel = env.FIREWORKS_MODEL; // extractFacts has default model if undefined
+	const fwModel = env.FIREWORKS_MODEL || undefined; // extractFacts has default model if undefined
 
 	for (const msg of batch.messages) {
 		const { sessionId } = msg.body;

@@ -516,7 +516,7 @@ export function createIngestRoute(
 		// ── Legacy/Fallback inline pipeline if binding does not exist ──
 		const env = _opts?.getEnv ? _opts.getEnv(c) : {};
 		const fwKey = env.FIREWORKS_API_KEY ?? "";
-		const fwModel = env.FIREWORKS_MODEL ?? DEFAULT_FIREWORKS_MODEL;
+		const fwModel = env.FIREWORKS_MODEL || DEFAULT_FIREWORKS_MODEL;
 
 		const doIngest = async () => {
 			try {
