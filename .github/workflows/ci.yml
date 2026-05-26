@@ -68,6 +68,7 @@ jobs:
         run: |
           bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0000_giant_tyrannus.sql
           bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0001_sloppy_punisher.sql
+          bun wrangler d1 execute divmemory-db-e2e --config wrangler.e2e.jsonc --local --file=migrations/0002_add_consolidated_to_memories.sql
 
       - name: E2E tests
         run: bun run test:e2e
