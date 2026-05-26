@@ -12,7 +12,7 @@ import { createConsolidateRoute } from "../worker/src/routes/consolidate";
 import { createContextRoute } from "../worker/src/routes/context";
 import { createIngestRoute } from "../worker/src/routes/ingest";
 import { memories, projects, sessions } from "../worker/src/schema";
-import { BunSQLiteAdapter } from "../worker/src/db/bun-sqlite-adapter";
+import { BunSQLiteAdapter } from "../worker/src/db/testing";
 import type { Database } from "../worker/src/db/types";
 
 const TEST_API_KEY = "test-api-key-123";

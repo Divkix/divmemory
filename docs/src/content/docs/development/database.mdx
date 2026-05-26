@@ -15,7 +15,8 @@ The worker uses a typed `Database` seam in `worker/src/db/` instead of the legac
 
 Factory helpers:
 
-- `createDatabaseFromEnv(d1)` — production D1 binding
+- `createDatabaseFromEnv(d1)` — production D1 binding (`worker/src/db/index.ts`)
+- Test adapters live in `worker/src/db/testing.ts` (not bundled for deploy)
 - `createTestDb()` in `worker/src/test-helpers.ts` — returns `BunSQLiteAdapter` wrapped as `Database`
 
 ## Usage in routes

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { BunSQLiteAdapter } from "./db/bun-sqlite-adapter";
+import { BunSQLiteAdapter } from "./db/testing";
 import type { Database as Db } from "./db/types";
 
 /** Build an in-memory SQLite DB wrapped by the typed Database seam for tests. */
