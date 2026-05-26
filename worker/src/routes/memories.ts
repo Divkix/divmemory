@@ -328,19 +328,17 @@ export function createMemoriesRoute(app: any, db?: DbLike) {
 		}
 
 		if (row.curated === 1) {
-			// Soft-archive curated facts
-			const archiveResult = await dbCtx
-				.update(memories)
-				.set({ status: "archived", updatedAt: nowISO() })
-				.where(eq(memories.id, id))
-				.run();
-			const archived = archiveResult as { rowsAffected?: number; changes?: number };
-			if ((archived.rowsAffected ?? archived.changes ?? 0) === 0) {
-				return c.json({ error: "Memory not found" }, 404);
-			}
-			if (row.projectId && row.content) {
-				await cascadeDeleteNearDuplicates(dbCtx, row.projectId, row.content);
-			}
+			// Soft-archive curated facts atomically with cascade
+			await runAtomic(dbCtx, async (dbOrTx, addStmt) => {
+				const archiveStmt = dbOrTx
+					.update(memories)
+					.set({ status: "archived", updatedAt: nowISO() })
+					.where(eq(memories.id, id));
+				addStmt(archiveStmt);
+				if (row.projectId && row.content) {
+					await cascadeDeleteNearDuplicates(dbOrTx, row.projectId, row.content);
+				}
+			});
 			return c.json({ ok: true }, 200);
 		}
 

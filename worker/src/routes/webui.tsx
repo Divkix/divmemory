@@ -298,7 +298,9 @@ export function createWebUiRoute(
 				.select()
 				.from(memories)
 				.where(eq(memories.id, memId))
-				.get()) as unknown as (MemoryRow & { projectId: string; content: string }) | undefined;
+				.get()) as unknown as
+				| (MemoryRow & { projectId: string; content: string | null })
+				| undefined;
 			if (!row) {
 				return c.redirect(`/?project=${encodeURIComponent(projectId)}&error=Memory+not+found`, 302);
 			}
@@ -308,7 +310,9 @@ export function createWebUiRoute(
 					.set({ status: "archived", updatedAt: new Date().toISOString() })
 					.where(eq(memories.id, memId))
 					.run();
-				await cascadeDeleteNearDuplicates(dbCtx, row.projectId, row.content);
+				if (row.content) {
+					await cascadeDeleteNearDuplicates(dbCtx, row.projectId, row.content);
+				}
 			} else {
 				await dbCtx.delete(memories).where(eq(memories.id, memId)).run();
 			}
