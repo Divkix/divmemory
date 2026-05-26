@@ -1,4 +1,10 @@
+import { z } from "zod";
 import { recoverJSON } from "./utils";
+
+const ErrorPayloadSchema = z.object({
+	error: z.object({ message: z.string().optional() }).optional(),
+	message: z.string().optional(),
+});
 
 /* ───────── types ───────── */
 
@@ -56,16 +62,26 @@ export async function callFirepass(
 					model,
 					messages: [{ role: "user", content: prompt }],
 					temperature: 0.1,
-					max_tokens: 4096,
 				}),
 				signal: controller.signal,
 			});
 			if (!res.ok) {
 				const bodyText = await res.text();
+				let detail = res.statusText;
+				try {
+					const parsed = ErrorPayloadSchema.safeParse(JSON.parse(bodyText));
+					if (parsed.success) {
+						detail = parsed.data.error?.message ?? parsed.data.message ?? bodyText;
+					} else {
+						detail = bodyText || res.statusText;
+					}
+				} catch {
+					detail = bodyText || res.statusText;
+				}
 				return {
 					extracted: null,
 					rawResponse: bodyText,
-					error: `HTTP ${res.status}: ${res.statusText}`,
+					error: `HTTP ${res.status}: ${detail}`,
 				};
 			}
 			const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
