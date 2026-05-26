@@ -9,6 +9,7 @@ import { memories, projects, sessions } from "../schema";
 import { LoginPage, MainPage } from "../webui/components";
 import type { DbLike, MemoryRow, SessionRow } from "../webui/types";
 import * as consolidate from "./consolidate";
+import { cascadeDeleteNearDuplicates } from "./memories";
 
 const SESSION_COOKIE = "divmemory_session";
 
@@ -297,7 +298,7 @@ export function createWebUiRoute(
 				.select()
 				.from(memories)
 				.where(eq(memories.id, memId))
-				.get()) as unknown as MemoryRow | undefined;
+				.get()) as unknown as (MemoryRow & { projectId: string; content: string }) | undefined;
 			if (!row) {
 				return c.redirect(`/?project=${encodeURIComponent(projectId)}&error=Memory+not+found`, 302);
 			}
@@ -307,6 +308,7 @@ export function createWebUiRoute(
 					.set({ status: "archived", updatedAt: new Date().toISOString() })
 					.where(eq(memories.id, memId))
 					.run();
+				await cascadeDeleteNearDuplicates(dbCtx, row.projectId, row.content);
 			} else {
 				await dbCtx.delete(memories).where(eq(memories.id, memId)).run();
 			}
