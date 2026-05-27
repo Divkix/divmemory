@@ -1,4 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
+import type { Context, Hono } from "hono";
 import type { Database } from "../db";
 import { createDatabaseFromEnv } from "../db";
 import { TOPIC_LABELS, TOPIC_ORDER, type TopicId } from "../lib/topics";
@@ -115,10 +116,8 @@ function truncateContext(
 
 /* ───────── route ───────── */
 
-// biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive
-export function createContextRoute(app: any, db?: Database) {
-	// biome-ignore lint/suspicious/noExplicitAny: Hono context types vary across runtimes
-	app.get("/context", async (c: any) => {
+export function createContextRoute<E extends Record<string, unknown>>(app: Hono<E>, db?: Database) {
+	app.get("/context", async (c: Context<E>) => {
 		const projectId = c.req.query("project");
 		if (!projectId || typeof projectId !== "string" || projectId.trim() === "") {
 			return c.json({ error: "Missing required query parameter: project" }, 400);
@@ -133,7 +132,7 @@ export function createContextRoute(app: any, db?: Database) {
 			}
 		}
 
-		const dbCtx = db || getDb(c);
+		const dbCtx = db || getDb(c as unknown as { env: { DB: D1Database } });
 
 		// Fetch project info if it exists
 		const project = await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get();

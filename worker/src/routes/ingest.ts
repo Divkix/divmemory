@@ -263,6 +263,41 @@ export async function processExtractionAfter(
 	let factsWritten = 0;
 	const isExtractionError = result.error || !result.extracted;
 
+	let localFactsToInsert: Fact[] = [];
+	let localUpdates: Array<{ id: string; content?: string; confidence: number }> = [];
+	let globalFactsToInsert: Fact[] = [];
+	let globalUpdates: Array<{ id: string; content?: string; confidence: number }> = [];
+
+	let filtered: Fact[] = [];
+	if (!isExtractionError) {
+		// biome-ignore lint/style/noNonNullAssertion: guarded by isExtractionError check above
+		filtered = filterFacts(result.extracted!.facts);
+		for (const f of filtered) {
+			const factProjectId = (f as { project_id?: string }).project_id;
+			if (factProjectId === GLOBAL_PROJECT_ID && f.topic !== PREFERENCES_TOPIC) {
+				throw new Error("Invalid fact: project_id 'global' is reserved for preferences topic only");
+			}
+		}
+
+		if (filtered.length > 0) {
+			const localFacts = filtered.filter((f) => f.topic !== PREFERENCES_TOPIC);
+			const globalFacts = filtered.filter((f) => f.topic === PREFERENCES_TOPIC);
+
+			if (localFacts.length > 0) {
+				const deduped = await dedupFacts(localFacts, projectId, db);
+				localFactsToInsert = deduped.factsToInsert;
+				localUpdates = deduped.updates;
+				factsWritten += localFactsToInsert.length + localUpdates.length;
+			}
+			if (globalFacts.length > 0) {
+				const deduped = await dedupFacts(globalFacts, GLOBAL_PROJECT_ID, db);
+				globalFactsToInsert = deduped.factsToInsert;
+				globalUpdates = deduped.updates;
+				factsWritten += globalFactsToInsert.length + globalUpdates.length;
+			}
+		}
+	}
+
 	await db.atomic(async (collect) => {
 		if (isExtractionError) {
 			const rawResponse = result.rawResponse ?? result.error ?? "Firepass extraction failed";
@@ -273,20 +308,12 @@ export async function processExtractionAfter(
 					.where(eq(sessions.id, sessionId)),
 			);
 		} else {
-			// biome-ignore lint/style/noNonNullAssertion: guarded by isExtractionError check above
-			const filtered = filterFacts(result.extracted!.facts);
-			for (const f of filtered) {
-				const factProjectId = (f as { project_id?: string }).project_id;
-				if (factProjectId === GLOBAL_PROJECT_ID && f.topic !== PREFERENCES_TOPIC) {
-					throw new Error(
-						"Invalid fact: project_id 'global' is reserved for preferences topic only",
-					);
-				}
-			}
 			if (filtered.length > 0) {
-				const commitFacts = async (facts: Fact[], targetProjectId: string) => {
-					const { factsToInsert, updates } = await dedupFacts(facts, targetProjectId, db);
-					factsWritten += factsToInsert.length + updates.length;
+				const writeFacts = (
+					factsToInsert: Fact[],
+					updates: Array<{ id: string; content?: string; confidence: number }>,
+					targetProjectId: string,
+				) => {
 					for (const f of factsToInsert) {
 						collect(
 							db.insert(memories).values({
@@ -318,11 +345,10 @@ export async function processExtractionAfter(
 					}
 				};
 
-				const localFacts = filtered.filter((f) => f.topic !== PREFERENCES_TOPIC);
-				const globalFacts = filtered.filter((f) => f.topic === PREFERENCES_TOPIC);
-
-				if (localFacts.length > 0) await commitFacts(localFacts, projectId);
-				if (globalFacts.length > 0) {
+				if (localFactsToInsert.length > 0 || localUpdates.length > 0) {
+					writeFacts(localFactsToInsert, localUpdates, projectId);
+				}
+				if (globalFactsToInsert.length > 0 || globalUpdates.length > 0) {
 					// Upsert the pseudo-project row for global preferences
 					collect(
 						db
@@ -336,7 +362,7 @@ export async function processExtractionAfter(
 							})
 							.onConflictDoNothing(),
 					);
-					await commitFacts(globalFacts, GLOBAL_PROJECT_ID);
+					writeFacts(globalFactsToInsert, globalUpdates, GLOBAL_PROJECT_ID);
 				}
 			}
 
@@ -515,11 +541,13 @@ export function createIngestRoute(
 		const fwKey = env.FIREWORKS_API_KEY ?? "";
 		const fwModel = env.FIREWORKS_MODEL || DEFAULT_FIREWORKS_MODEL;
 
+		let bumped = false;
 		const doIngest = async () => {
 			try {
 				if (isNewSession) {
 					// Step 1: Bump project session count (only after new session confirmed)
 					await incrementProjectSessionCount(dbCtx, body, now);
+					bumped = true;
 				}
 
 				// Step 2: Firepass extraction (network call, outside DB transaction)
@@ -556,6 +584,14 @@ export function createIngestRoute(
 							.set({ consolidated: -1, extractionError: errMsg })
 							.where(eq(sessions.id, body.session_id)),
 					);
+					if (isNewSession && bumped) {
+						collect(
+							dbCtx
+								.update(projects)
+								.set({ sessionCount: sql`${projects.sessionCount} - 1` })
+								.where(eq(projects.id, body.project_id)),
+						);
+					}
 				});
 				return 0;
 			}

@@ -21,6 +21,7 @@ const WORKER_URL = "http://localhost";
 /** Build an in-memory SQLite DB matching the worker schema */
 function createTestDb() {
 	const sqlite = new SqliteDatabase(":memory:");
+	sqlite.exec("PRAGMA foreign_keys = ON;");
 	const db = new BunSQLiteAdapter(sqlite).asDatabase();
 	sqlite.exec(`
 		CREATE TABLE projects (

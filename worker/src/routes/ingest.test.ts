@@ -549,30 +549,43 @@ describe("ingest endpoint", () => {
 
 	describe("session count invariant", () => {
 		it("session_count matches COUNT(*) after each ingest", async () => {
-			for (let i = 0; i < 5; i++) {
-				const body = {
-					session_id: `sess-inv-${i}`,
-					project_id: "proj/invariant",
-					project_name: "Inv",
-					conversation: "text",
-				};
-				const req = new Request("http://localhost/ingest", {
-					method: "POST",
-					headers: authHeaders(),
-					body: JSON.stringify(body),
-				});
-				await app.fetch(req, envVars() as unknown as Record<string, string>);
-				const proj = testDb.db
-					.select()
-					.from(projects)
-					.where(eq(projects.id, "proj/invariant"))
-					.get();
-				const actual = testDb.db
-					.select({ count: sql<number>`count(*)` })
-					.from(sessions)
-					.where(eq(sessions.projectId, "proj/invariant"))
-					.get();
-				expect(proj?.sessionCount).toBe(actual?.count);
+			const origFetch = globalThis.fetch;
+			globalThis.fetch = async () =>
+				new Response(
+					JSON.stringify({
+						choices: [{ message: { content: JSON.stringify({ facts: [] }) } }],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+
+			try {
+				for (let i = 0; i < 5; i++) {
+					const body = {
+						session_id: `sess-inv-${i}`,
+						project_id: "proj/invariant",
+						project_name: "Inv",
+						conversation: "text",
+					};
+					const req = new Request("http://localhost/ingest", {
+						method: "POST",
+						headers: authHeaders(),
+						body: JSON.stringify(body),
+					});
+					await app.fetch(req, envVars() as unknown as Record<string, string>);
+					const proj = testDb.db
+						.select()
+						.from(projects)
+						.where(eq(projects.id, "proj/invariant"))
+						.get();
+					const actual = testDb.db
+						.select({ count: sql<number>`count(*)` })
+						.from(sessions)
+						.where(eq(sessions.projectId, "proj/invariant"))
+						.get();
+					expect(proj?.sessionCount).toBe(actual?.count);
+				}
+			} finally {
+				globalThis.fetch = origFetch;
 			}
 		});
 	});

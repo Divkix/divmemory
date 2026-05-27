@@ -1,4 +1,4 @@
-import { and, desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
 import type { Database } from "../db";
 import { createDatabaseFromEnv, normalizeWriteResult } from "../db";
 import { isValidTopic, VALID_TOPICS } from "../lib/topics";
@@ -108,21 +108,22 @@ export function createMemoriesRoute(app: any, db?: Database) {
 		const sessionId = `manual:${memoryId}`;
 
 		// Atomic: project upsert → session insert → memory insert
-		const project = await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get();
 		await dbCtx.atomic(async (collect) => {
-			if (project) {
-				collect(dbCtx.update(projects).set({ lastSeen: now }).where(eq(projects.id, projectId)));
-			} else {
-				collect(
-					dbCtx.insert(projects).values({
+			collect(
+				dbCtx
+					.insert(projects)
+					.values({
 						id: projectId,
 						name: body.project_name || projectId.split("/").pop() || projectId,
 						sessionCount: 0,
 						createdAt: now,
 						lastSeen: now,
+					})
+					.onConflictDoUpdate({
+						target: projects.id,
+						set: { lastSeen: now },
 					}),
-				);
-			}
+			);
 			collect(
 				dbCtx.insert(sessions).values({
 					id: sessionId,
@@ -205,11 +206,17 @@ export function createMemoriesRoute(app: any, db?: Database) {
 			{ id: string; name: string; topics: Map<string, Array<unknown>> }
 		>();
 
+		const uniqueProjectIds = Array.from(new Set(rows.map((r) => r.projectId)));
+		const fetchedProjects =
+			uniqueProjectIds.length > 0
+				? await dbCtx.select().from(projects).where(inArray(projects.id, uniqueProjectIds)).all()
+				: [];
+		const fetchedProjectsMap = new Map(fetchedProjects.map((p) => [p.id, p]));
+
 		for (const row of rows) {
 			const pid = row.projectId;
 			if (!projectMap.has(pid)) {
-				// Fetch project name
-				const proj = await dbCtx.select().from(projects).where(eq(projects.id, pid)).get();
+				const proj = fetchedProjectsMap.get(pid);
 				projectMap.set(pid, {
 					id: pid,
 					name: proj?.name || pid.split("/").pop() || pid,

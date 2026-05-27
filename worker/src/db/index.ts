@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { D1DrizzleAdapter } from "./d1-adapter";
 import type { Database } from "./types";
 
@@ -15,14 +16,13 @@ export type {
 } from "./types";
 export { normalizeWriteResult } from "./types";
 
+const DatabaseSchema = z.object({
+	client: z.unknown(),
+	atomic: z.function(),
+});
+
 export function isDatabase(value: unknown): value is Database {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"client" in value &&
-		"atomic" in value &&
-		typeof (value as Database).atomic === "function"
-	);
+	return DatabaseSchema.safeParse(value).success;
 }
 
 /** Production D1 adapter from a Worker binding. */

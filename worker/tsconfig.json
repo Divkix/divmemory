@@ -7,7 +7,7 @@
 		"lib": ["ES2024"],
 		"jsx": "react-jsx",
 		"jsxImportSource": "hono/jsx",
-		"types": ["@cloudflare/workers-types", "vitest/globals"],
+		"types": ["@cloudflare/workers-types", "vitest/globals", "node"],
 		"outDir": "./dist",
 		"rootDir": "./src",
 		"baseUrl": ".",

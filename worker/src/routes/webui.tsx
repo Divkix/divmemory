@@ -267,7 +267,11 @@ export function createWebUiRoute(
 		// Edit memory
 		if (methodOverride === "PATCH" && body.edit) {
 			const memId = String(body.edit);
-			const existing = await dbCtx.select().from(memories).where(eq(memories.id, memId)).get();
+			const existing = await dbCtx
+				.select()
+				.from(memories)
+				.where(and(eq(memories.id, memId), eq(memories.projectId, projectId)))
+				.get();
 			if (!existing) {
 				return c.redirect(`/?project=${encodeURIComponent(projectId)}&error=Memory+not+found`, 302);
 			}
@@ -278,14 +282,22 @@ export function createWebUiRoute(
 				set.curated = 1;
 				set.confidence = 1.0;
 			}
-			await dbCtx.update(memories).set(set).where(eq(memories.id, memId)).run();
+			await dbCtx
+				.update(memories)
+				.set(set)
+				.where(and(eq(memories.id, memId), eq(memories.projectId, projectId)))
+				.run();
 			return c.redirect(`/?project=${encodeURIComponent(projectId)}&success=Memory+updated`, 302);
 		}
 
 		// Delete memory
 		if (methodOverride === "DELETE" && body.delete) {
 			const memId = String(body.delete);
-			const row = await dbCtx.select().from(memories).where(eq(memories.id, memId)).get();
+			const row = await dbCtx
+				.select()
+				.from(memories)
+				.where(and(eq(memories.id, memId), eq(memories.projectId, projectId)))
+				.get();
 			if (!row) {
 				return c.redirect(`/?project=${encodeURIComponent(projectId)}&error=Memory+not+found`, 302);
 			}
@@ -295,14 +307,17 @@ export function createWebUiRoute(
 						dbCtx
 							.update(memories)
 							.set({ status: "archived", updatedAt: new Date().toISOString() })
-							.where(eq(memories.id, memId)),
+							.where(and(eq(memories.id, memId), eq(memories.projectId, projectId))),
 					);
 					if (row.content) {
-						await cascadeDeleteNearDuplicates(dbCtx, collect, row.projectId, row.content);
+						await cascadeDeleteNearDuplicates(dbCtx, collect, projectId, row.content);
 					}
 				});
 			} else {
-				await dbCtx.delete(memories).where(eq(memories.id, memId)).run();
+				await dbCtx
+					.delete(memories)
+					.where(and(eq(memories.id, memId), eq(memories.projectId, projectId)))
+					.run();
 			}
 			return c.redirect(`/?project=${encodeURIComponent(projectId)}&success=Memory+removed`, 302);
 		}
@@ -313,7 +328,7 @@ export function createWebUiRoute(
 			await dbCtx
 				.update(memories)
 				.set({ status: "active", updatedAt: new Date().toISOString() })
-				.where(eq(memories.id, memId))
+				.where(and(eq(memories.id, memId), eq(memories.projectId, projectId)))
 				.run();
 			return c.redirect(`/?project=${encodeURIComponent(projectId)}&success=Memory+restored`, 302);
 		}

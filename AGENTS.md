@@ -6,7 +6,7 @@ Full docs: https://divmemory-docs.divkix.workers.dev
 
 This is a Bun monorepo with four workspaces:
 
-```
+```text
 worker/   — Cloudflare Worker (Hono + D1 + Drizzle), web UI, and REST API
 plugin/   — Factory Droid plugin (scripts, commands, skills)
 cli/      — Bootstrap CLI for project setup

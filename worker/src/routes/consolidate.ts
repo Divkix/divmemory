@@ -437,6 +437,7 @@ export async function runConsolidation(
 					acquiredGlobalDbLock = await acquireGlobalWriteLock(db);
 				} catch {
 					// Legacy schema without consolidation_in_progress — proceed without DB lock
+					acquiredGlobalDbLock = true;
 					break;
 				}
 				if (acquiredGlobalDbLock) break;
@@ -457,8 +458,14 @@ export async function runConsolidation(
 							error: "Global memory write already in progress",
 						};
 					}
+					return {
+						consolidated: 0,
+						archived: 0,
+						error: "Global memory lock not acquired",
+					};
 				} catch {
-					// proceed without lock on legacy schema
+					// Legacy schema without consolidation_in_progress — proceed without DB lock
+					acquiredGlobalDbLock = true;
 				}
 			}
 
