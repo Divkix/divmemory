@@ -1,7 +1,7 @@
 import type { D1Database, ExecutionContext, MessageBatch } from "@cloudflare/workers-types";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
-import type { DbLike } from "../lib/db";
+import type { Database } from "../db";
+import { createDatabaseFromEnv, isDatabase } from "../db";
 import {
 	extractFacts,
 	processExtractionAfter,
@@ -18,7 +18,7 @@ export interface QueueMessage {
 export async function processIngestQueue(
 	batch: MessageBatch<QueueMessage>,
 	env: {
-		DB: D1Database | DbLike;
+		DB: D1Database | Database;
 		FIREWORKS_API_KEY?: string;
 		FIREWORKS_MODEL?: string;
 	},
@@ -32,7 +32,7 @@ export async function processIngestQueue(
 	if (!env.DB) {
 		throw new Error("D1 Database binding 'DB' is missing in environment");
 	}
-	const dbCtx = "select" in env.DB ? env.DB : drizzle(env.DB as D1Database);
+	const dbCtx = isDatabase(env.DB) ? env.DB : createDatabaseFromEnv(env.DB as D1Database);
 
 	const fwKey = env.FIREWORKS_API_KEY ?? "";
 	const fwModel = env.FIREWORKS_MODEL || undefined; // extractFacts has default model if undefined

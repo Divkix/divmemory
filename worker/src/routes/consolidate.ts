@@ -1,6 +1,6 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import type { DbLike } from "../lib/db";
-import { runAtomic } from "../lib/db";
+import type { Database } from "../db";
+import { createDatabaseFromEnv, normalizeWriteResult } from "../db";
 import { callFirepass } from "../lib/firepass";
 import { PREFERENCES_TOPIC } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
@@ -62,7 +62,7 @@ type ActiveMemoryRow = {
 	updatedAt: string | null;
 };
 
-async function ensureGlobalProjectRow(db: DbLike, now: string): Promise<void> {
+async function ensureGlobalProjectRow(db: Database, now: string): Promise<void> {
 	await db
 		.insert(projects)
 		.values({
@@ -76,19 +76,18 @@ async function ensureGlobalProjectRow(db: DbLike, now: string): Promise<void> {
 		.run();
 }
 
-async function acquireGlobalWriteLock(db: DbLike): Promise<boolean> {
+async function acquireGlobalWriteLock(db: Database): Promise<boolean> {
 	const lockResult = await db
 		.update(projects)
 		.set({ consolidationInProgress: 1 })
 		.where(and(eq(projects.id, GLOBAL_PROJECT_ID), eq(projects.consolidationInProgress, 0)))
 		.run();
 
-	const result = lockResult as { rowsAffected?: number; changes?: number };
-	const changes = result.rowsAffected ?? result.changes;
+	const { changes } = normalizeWriteResult(lockResult);
 	return changes !== 0;
 }
 
-async function releaseGlobalWriteLock(db: DbLike): Promise<void> {
+async function releaseGlobalWriteLock(db: Database): Promise<void> {
 	try {
 		await db
 			.update(projects)
@@ -107,12 +106,20 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchActiveGlobalMemories(db: DbLike): Promise<ActiveMemoryRow[]> {
-	return (await db
+async function fetchActiveGlobalMemories(db: Database): Promise<ActiveMemoryRow[]> {
+	const rows = await db
 		.select()
 		.from(memories)
 		.where(and(eq(memories.projectId, GLOBAL_PROJECT_ID), eq(memories.status, "active")))
-		.all()) as ActiveMemoryRow[];
+		.all();
+	return rows.map((row) => ({
+		id: row.id,
+		topic: row.topic,
+		content: row.content,
+		confidence: row.confidence ?? 0,
+		curated: row.curated ?? 0,
+		updatedAt: row.updatedAt,
+	}));
 }
 
 interface BuildPromptResult {
@@ -165,7 +172,7 @@ export function buildSafeConsolidationPrompt(
 
 export async function runConsolidation(
 	projectId: string,
-	db: DbLike,
+	db: Database,
 	env: { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
 	extractor?: (prompt: string, apiKey: string, model: string) => Promise<Extracted | null>,
 	maxChars = MAX_PROMPT_CHARS,
@@ -184,8 +191,7 @@ export async function runConsolidation(
 			.where(and(eq(projects.id, projectId), eq(projects.consolidationInProgress, 0)))
 			.run();
 
-		const result = lockResult as { rowsAffected?: number; changes?: number };
-		const changes = result.rowsAffected ?? result.changes;
+		const { changes } = normalizeWriteResult(lockResult);
 		if (changes === 0) {
 			return { consolidated: 0, archived: 0, error: "Consolidation already in progress" };
 		}
@@ -202,27 +208,17 @@ export async function runConsolidation(
 		const now = new Date().toISOString();
 
 		/* 1. Read unconsolidated + error-flagged sessions */
-		const pendingRows = (await db
+		const pendingRows = await db
 			.select()
 			.from(sessions)
 			.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, 0)))
-			.all()) as Array<{
-			id: string;
-			rawText: string | null;
-			consolidated: number;
-			extractionError: string | null;
-		}>;
+			.all();
 
-		const errorRows = (await db
+		const errorRows = await db
 			.select()
 			.from(sessions)
 			.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, -1)))
-			.all()) as Array<{
-			id: string;
-			rawText: string | null;
-			consolidated: number;
-			extractionError: string | null;
-		}>;
+			.all();
 
 		const allSessions = [...pendingRows, ...errorRows];
 
@@ -231,18 +227,11 @@ export async function runConsolidation(
 		}
 
 		/* 2. Read existing active memories (exclude archived) */
-		const existingMemories = (await db
+		const existingMemories = await db
 			.select()
 			.from(memories)
 			.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-			.all()) as Array<{
-			id: string;
-			topic: string | null;
-			content: string | null;
-			confidence: number;
-			curated: number;
-			updatedAt: string | null;
-		}>;
+			.all();
 
 		/* 3. Build prompt */
 		const { prompt, includedSessionIds } = buildSafeConsolidationPrompt(
@@ -269,10 +258,10 @@ export async function runConsolidation(
 		);
 
 		const applyConsolidationWrites = async (existingGlobalMemories: ActiveMemoryRow[]) => {
-			await runAtomic(db, async (tx, addStmt) => {
+			await db.atomic(async (collect) => {
 				// Ensure global project row exists
-				addStmt(
-					tx
+				collect(
+					db
 						.insert(projects)
 						.values({
 							id: GLOBAL_PROJECT_ID,
@@ -299,13 +288,20 @@ export async function runConsolidation(
 							matched = true;
 							if (mem.curated === 1) {
 								// Corroboration refresh: update curated fact's updated_at (in-batch call)
-								addStmt(tx.update(memories).set({ updatedAt: now }).where(eq(memories.id, mem.id)));
+								collect(db.update(memories).set({ updatedAt: now }).where(eq(memories.id, mem.id)));
 								break;
 							}
-							const updateEntry = {
+							const memConfidence = mem.confidence ?? 0;
+							const nextConfidence =
+								fact.confidence > memConfidence ? fact.confidence : memConfidence;
+							const updateEntry: {
+								id: string;
+								content?: string;
+								confidence: number;
+							} = {
 								id: mem.id,
-								...(fact.confidence > mem.confidence ? { content: fact.content } : {}),
-								confidence: fact.confidence > mem.confidence ? fact.confidence : mem.confidence,
+								...(fact.confidence > memConfidence ? { content: fact.content } : {}),
+								confidence: nextConfidence,
 							};
 							if (isGlobal) {
 								globalUpdates.push(updateEntry);
@@ -325,8 +321,8 @@ export async function runConsolidation(
 				}
 
 				for (const u of localUpdates) {
-					addStmt(
-						tx
+					collect(
+						db
 							.update(memories)
 							.set({
 								updatedAt: now,
@@ -339,8 +335,8 @@ export async function runConsolidation(
 				}
 
 				for (const f of localFactsToInsert) {
-					addStmt(
-						tx.insert(memories).values({
+					collect(
+						db.insert(memories).values({
 							id: crypto.randomUUID(),
 							projectId,
 							sourceSession: includedSessionIds[0] ?? crypto.randomUUID(),
@@ -357,8 +353,8 @@ export async function runConsolidation(
 				}
 
 				// Delete old draft memories for this project (curated=0, consolidated=0)
-				addStmt(
-					tx
+				collect(
+					db
 						.delete(memories)
 						.where(
 							and(
@@ -370,8 +366,8 @@ export async function runConsolidation(
 				);
 
 				for (const u of globalUpdates) {
-					addStmt(
-						tx
+					collect(
+						db
 							.update(memories)
 							.set({
 								updatedAt: now,
@@ -384,8 +380,8 @@ export async function runConsolidation(
 				}
 
 				for (const f of globalFactsToInsert) {
-					addStmt(
-						tx.insert(memories).values({
+					collect(
+						db.insert(memories).values({
 							id: crypto.randomUUID(),
 							projectId: GLOBAL_PROJECT_ID,
 							sourceSession: includedSessionIds[0] ?? crypto.randomUUID(),
@@ -403,8 +399,8 @@ export async function runConsolidation(
 
 				// Only delete global drafts when this pass legitimately touched global
 				if (mayTouchGlobal) {
-					addStmt(
-						tx
+					collect(
+						db
 							.delete(memories)
 							.where(
 								and(
@@ -418,8 +414,8 @@ export async function runConsolidation(
 
 				for (const s of allSessions) {
 					if (includedSessionIds.includes(s.id)) {
-						addStmt(
-							tx
+						collect(
+							db
 								.update(sessions)
 								.set({ consolidated: 1, rawText: null, extractionError: null })
 								.where(eq(sessions.id, s.id)),
@@ -441,6 +437,7 @@ export async function runConsolidation(
 					acquiredGlobalDbLock = await acquireGlobalWriteLock(db);
 				} catch {
 					// Legacy schema without consolidation_in_progress — proceed without DB lock
+					acquiredGlobalDbLock = true;
 					break;
 				}
 				if (acquiredGlobalDbLock) break;
@@ -461,8 +458,14 @@ export async function runConsolidation(
 							error: "Global memory write already in progress",
 						};
 					}
+					return {
+						consolidated: 0,
+						archived: 0,
+						error: "Global memory lock not acquired",
+					};
 				} catch {
-					// proceed without lock on legacy schema
+					// Legacy schema without consolidation_in_progress — proceed without DB lock
+					acquiredGlobalDbLock = true;
 				}
 			}
 
@@ -500,7 +503,7 @@ export async function runConsolidation(
 /* ───────── Cron: consolidate all projects with >=2 unconsolidated sessions ───────── */
 
 export async function runCronConsolidation(
-	db: DbLike,
+	db: Database,
 	env: { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string },
 	extractor?: (prompt: string, apiKey: string, model: string) => Promise<Extracted | null>,
 ): Promise<{ projectsProcessed: number; totalSessions: number; totalArchived: number }> {
@@ -511,13 +514,13 @@ export async function runCronConsolidation(
 	// Query projects with >=2 unconsolidated sessions, skipping the global pseudo-project.
 	// Global memories are managed via routing, promotion dedup, and manual /memories curation,
 	// not through project-level cron consolidation.
-	const rows = (await db
+	const rows = await db
 		.select({ projectId: sessions.projectId })
 		.from(sessions)
 		.where(and(eq(sessions.consolidated, 0), ne(sessions.projectId, GLOBAL_PROJECT_ID)))
 		.groupBy(sessions.projectId)
 		.having(sql`count(*) >= 2`)
-		.all()) as Array<{ projectId: string }>;
+		.all();
 
 	for (const row of rows) {
 		const result = await runConsolidation(row.projectId, db, env, extractor);
@@ -533,16 +536,14 @@ export async function runCronConsolidation(
 
 /* ───────── route ───────── */
 
-async function getDb(c: { env: { DB: D1Database } }) {
-	const { drizzle } = await import("drizzle-orm/d1");
-	return drizzle(c.env.DB);
+function getDb(c: { env: { DB: D1Database } }) {
+	return createDatabaseFromEnv(c.env.DB);
 }
 
 export function createConsolidateRoute(
 	// biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive for route wrappers
 	app: any,
-	// biome-ignore lint/suspicious/noExplicitAny: test override
-	db?: any,
+	db?: Database,
 	opts?: {
 		// biome-ignore lint/suspicious/noExplicitAny: env bindings vary across Workers runtimes
 		getEnv?: (c: any) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string };

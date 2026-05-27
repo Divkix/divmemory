@@ -1,12 +1,11 @@
 import { and, eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
-import type { DbLike } from "../lib/db";
-import { runAtomic } from "../lib/db";
+import type { Database } from "../db";
+import { createDatabaseFromEnv } from "../db";
 import { PREFERENCES_TOPIC } from "../lib/topics";
 import { jaccardSimilarity } from "../lib/utils";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 
-export type { DbLike } from "../lib/db";
+export type { Database } from "../db";
 export { jaccardSimilarity, recoverJSON } from "../lib/utils";
 
 /* ───────── types ───────── */
@@ -131,21 +130,16 @@ function filterFacts(facts: Fact[]): Fact[] {
 async function dedupFacts(
 	facts: Fact[],
 	projectId: string,
-	db: DbLike,
+	db: Database,
 ): Promise<{
 	factsToInsert: Fact[];
 	updates: Array<{ id: string; content?: string; confidence: number }>;
 }> {
-	const existing = (await db
+	const existing = await db
 		.select()
 		.from(memories)
 		.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-		.all()) as Array<{
-		id: string;
-		content: string;
-		confidence: number;
-		curated: number;
-	}>;
+		.all();
 
 	const factsToInsert: Fact[] = [];
 	const updates: Array<{ id: string; content?: string; confidence: number }> = [];
@@ -153,13 +147,15 @@ async function dedupFacts(
 	for (const fact of facts) {
 		let matched = false;
 		for (const mem of existing) {
-			if (jaccardSimilarity(fact.content, mem.content) > DEDUP_THRESHOLD) {
+			const memContent = mem.content ?? "";
+			const memConfidence = mem.confidence ?? 0;
+			if (jaccardSimilarity(fact.content, memContent) > DEDUP_THRESHOLD) {
 				matched = true;
 				if (mem.curated === 1) {
 					// curated fact protection: skip entirely
 					break;
 				}
-				if (fact.confidence > mem.confidence) {
+				if (fact.confidence > memConfidence) {
 					updates.push({
 						id: mem.id,
 						content: fact.content,
@@ -168,7 +164,7 @@ async function dedupFacts(
 				} else {
 					updates.push({
 						id: mem.id,
-						confidence: mem.confidence, // keep old confidence, still need to update timestamp
+						confidence: memConfidence, // keep old confidence, still need to update timestamp
 					});
 				}
 				break;
@@ -185,31 +181,31 @@ async function dedupFacts(
 /* ───────── helpers: auto-consolidation trigger ───────── */
 
 export function setConsolidationTrigger(
-	fn: (projectId: string, db: DbLike, c: unknown) => undefined | Promise<unknown>,
+	fn: (projectId: string, db: Database, c: unknown) => undefined | Promise<unknown>,
 ) {
 	consolidationTrigger = fn;
 }
 
 let consolidationTrigger: (
 	projectId: string,
-	db: DbLike,
+	db: Database,
 	c: unknown,
-) => undefined | Promise<unknown> = (_projectId: string, _db: DbLike, _c: unknown) => {
+) => undefined | Promise<unknown> = (_projectId: string, _db: Database, _c: unknown) => {
 	// default no-op — real trigger wired by the consolidation feature
 };
 
-export async function unconsolidatedCount(projectId: string, db: DbLike): Promise<number> {
-	const row = (await db
+export async function unconsolidatedCount(projectId: string, db: Database): Promise<number> {
+	const row = await db
 		.select({ count: sql<number>`count(*)` })
 		.from(sessions)
 		.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, 0)))
-		.get()) as { count: number } | undefined;
+		.get();
 	return row?.count ?? 0;
 }
 
 export function triggerConsolidation(
 	projectId: string,
-	db: DbLike,
+	db: Database,
 	c: unknown,
 ): undefined | Promise<unknown> {
 	return consolidationTrigger(projectId, db, c);
@@ -217,7 +213,7 @@ export function triggerConsolidation(
 
 /* ───────── split atomic DB operations: pre-insert (session with raw_text) + post-extraction update ───────── */
 
-async function ensureProjectExists(db: DbLike, body: IngestBody, now: string): Promise<void> {
+async function ensureProjectExists(db: Database, body: IngestBody, now: string): Promise<void> {
 	// Creates the project row if missing (for FK compliance). Does NOT
 	// increment sessionCount — that only happens after the session is
 	// confirmed as newly created (not a duplicate).
@@ -235,16 +231,16 @@ async function ensureProjectExists(db: DbLike, body: IngestBody, now: string): P
 }
 
 export async function incrementProjectSessionCount(
-	db: DbLike,
+	db: Database,
 	body: IngestBody,
 	now: string,
 ): Promise<void> {
 	// Increments sessionCount and updates lastSeen for an existing project.
 	// Only called AFTER the session insert confirmed this is a new session.
 	const projectId = body.project_id;
-	await runAtomic(db, async (tx, addStmt) => {
-		addStmt(
-			tx
+	await db.atomic(async (collect) => {
+		collect(
+			db
 				.update(projects)
 				.set({
 					lastSeen: now,
@@ -256,7 +252,7 @@ export async function incrementProjectSessionCount(
 }
 
 export async function processExtractionAfter(
-	db: DbLike,
+	db: Database,
 	body: IngestBody,
 	result: ExtractionResult,
 	now: string,
@@ -267,33 +263,60 @@ export async function processExtractionAfter(
 	let factsWritten = 0;
 	const isExtractionError = result.error || !result.extracted;
 
-	await runAtomic(db, async (tx, addStmt) => {
+	let localFactsToInsert: Fact[] = [];
+	let localUpdates: Array<{ id: string; content?: string; confidence: number }> = [];
+	let globalFactsToInsert: Fact[] = [];
+	let globalUpdates: Array<{ id: string; content?: string; confidence: number }> = [];
+
+	let filtered: Fact[] = [];
+	if (!isExtractionError) {
+		// biome-ignore lint/style/noNonNullAssertion: guarded by isExtractionError check above
+		filtered = filterFacts(result.extracted!.facts);
+		for (const f of filtered) {
+			const factProjectId = (f as { project_id?: string }).project_id;
+			if (factProjectId === GLOBAL_PROJECT_ID && f.topic !== PREFERENCES_TOPIC) {
+				throw new Error("Invalid fact: project_id 'global' is reserved for preferences topic only");
+			}
+		}
+
+		if (filtered.length > 0) {
+			const localFacts = filtered.filter((f) => f.topic !== PREFERENCES_TOPIC);
+			const globalFacts = filtered.filter((f) => f.topic === PREFERENCES_TOPIC);
+
+			if (localFacts.length > 0) {
+				const deduped = await dedupFacts(localFacts, projectId, db);
+				localFactsToInsert = deduped.factsToInsert;
+				localUpdates = deduped.updates;
+				factsWritten += localFactsToInsert.length + localUpdates.length;
+			}
+			if (globalFacts.length > 0) {
+				const deduped = await dedupFacts(globalFacts, GLOBAL_PROJECT_ID, db);
+				globalFactsToInsert = deduped.factsToInsert;
+				globalUpdates = deduped.updates;
+				factsWritten += globalFactsToInsert.length + globalUpdates.length;
+			}
+		}
+	}
+
+	await db.atomic(async (collect) => {
 		if (isExtractionError) {
 			const rawResponse = result.rawResponse ?? result.error ?? "Firepass extraction failed";
-			addStmt(
-				tx
+			collect(
+				db
 					.update(sessions)
 					.set({ consolidated: -1, extractionError: rawResponse })
 					.where(eq(sessions.id, sessionId)),
 			);
 		} else {
-			// biome-ignore lint/style/noNonNullAssertion: guarded by isExtractionError check above
-			const filtered = filterFacts(result.extracted!.facts);
-			for (const f of filtered) {
-				const factProjectId = (f as { project_id?: string }).project_id;
-				if (factProjectId === GLOBAL_PROJECT_ID && f.topic !== PREFERENCES_TOPIC) {
-					throw new Error(
-						"Invalid fact: project_id 'global' is reserved for preferences topic only",
-					);
-				}
-			}
 			if (filtered.length > 0) {
-				const commitFacts = async (facts: Fact[], targetProjectId: string) => {
-					const { factsToInsert, updates } = await dedupFacts(facts, targetProjectId, tx);
-					factsWritten += factsToInsert.length + updates.length;
+				const writeFacts = (
+					factsToInsert: Fact[],
+					updates: Array<{ id: string; content?: string; confidence: number }>,
+					targetProjectId: string,
+				) => {
 					for (const f of factsToInsert) {
-						addStmt(
-							tx.insert(memories).values({
+						collect(
+							db.insert(memories).values({
 								id: crypto.randomUUID(),
 								projectId: targetProjectId,
 								sourceSession: sessionId,
@@ -309,8 +332,8 @@ export async function processExtractionAfter(
 						);
 					}
 					for (const u of updates) {
-						addStmt(
-							tx
+						collect(
+							db
 								.update(memories)
 								.set({
 									updatedAt: now,
@@ -322,14 +345,13 @@ export async function processExtractionAfter(
 					}
 				};
 
-				const localFacts = filtered.filter((f) => f.topic !== PREFERENCES_TOPIC);
-				const globalFacts = filtered.filter((f) => f.topic === PREFERENCES_TOPIC);
-
-				if (localFacts.length > 0) await commitFacts(localFacts, projectId);
-				if (globalFacts.length > 0) {
+				if (localFactsToInsert.length > 0 || localUpdates.length > 0) {
+					writeFacts(localFactsToInsert, localUpdates, projectId);
+				}
+				if (globalFactsToInsert.length > 0 || globalUpdates.length > 0) {
 					// Upsert the pseudo-project row for global preferences
-					addStmt(
-						tx
+					collect(
+						db
 							.insert(projects)
 							.values({
 								id: GLOBAL_PROJECT_ID,
@@ -340,12 +362,12 @@ export async function processExtractionAfter(
 							})
 							.onConflictDoNothing(),
 					);
-					await commitFacts(globalFacts, GLOBAL_PROJECT_ID);
+					writeFacts(globalFactsToInsert, globalUpdates, GLOBAL_PROJECT_ID);
 				}
 			}
 
-			addStmt(
-				tx
+			collect(
+				db
 					.update(sessions)
 					.set({ consolidated: 0, extractionError: null })
 					.where(eq(sessions.id, sessionId)),
@@ -360,13 +382,13 @@ export async function processExtractionAfter(
 
 /* type for the D1 binding held in Hono context */
 function getDb(c: { env: { DB: D1Database } }) {
-	return drizzle(c.env.DB);
+	return createDatabaseFromEnv(c.env.DB);
 }
 
 export function createIngestRoute(
 	// biome-ignore lint/suspicious/noExplicitAny: Hono generic typing is too restrictive for our use case
 	app: any,
-	db: DbLike | undefined,
+	db: Database | undefined,
 	_opts?: { getEnv?: (c: unknown) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
 ) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types are runtime-specific
@@ -489,9 +511,9 @@ export function createIngestRoute(
 					await dbCtx.delete(sessions).where(eq(sessions.id, body.session_id));
 					// Revert project count bump
 					if (incremented) {
-						await runAtomic(dbCtx, async (tx, addStmt) => {
-							addStmt(
-								tx
+						await dbCtx.atomic(async (collect) => {
+							collect(
+								dbCtx
 									.update(projects)
 									.set({ sessionCount: sql`${projects.sessionCount} - 1` })
 									.where(eq(projects.id, body.project_id)),
@@ -519,11 +541,13 @@ export function createIngestRoute(
 		const fwKey = env.FIREWORKS_API_KEY ?? "";
 		const fwModel = env.FIREWORKS_MODEL || DEFAULT_FIREWORKS_MODEL;
 
+		let bumped = false;
 		const doIngest = async () => {
 			try {
 				if (isNewSession) {
 					// Step 1: Bump project session count (only after new session confirmed)
 					await incrementProjectSessionCount(dbCtx, body, now);
+					bumped = true;
 				}
 
 				// Step 2: Firepass extraction (network call, outside DB transaction)
@@ -537,8 +561,13 @@ export function createIngestRoute(
 				if (unconsol >= 5) {
 					const promise = triggerConsolidation(body.project_id, dbCtx, c);
 					if (promise instanceof Promise) {
-						const wc = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void };
-						if (typeof wc.waitUntil === "function") {
+						let wc: { waitUntil?: (p: Promise<unknown>) => void } | undefined;
+						try {
+							wc = c.executionCtx;
+						} catch {
+							// ignore if execution context is absent
+						}
+						if (wc && typeof wc.waitUntil === "function") {
 							wc.waitUntil(
 								promise.catch((err) => {
 									console.error("[Auto-Consolidation] Inline trigger failed:", err);
@@ -553,13 +582,21 @@ export function createIngestRoute(
 			} catch (e) {
 				const errMsg = e instanceof Error ? e.message : String(e);
 				// Update session as error (atomic batch for D1)
-				await runAtomic(dbCtx, async (tx, addStmt) => {
-					addStmt(
-						tx
+				await dbCtx.atomic(async (collect) => {
+					collect(
+						dbCtx
 							.update(sessions)
 							.set({ consolidated: -1, extractionError: errMsg })
 							.where(eq(sessions.id, body.session_id)),
 					);
+					if (isNewSession && bumped) {
+						collect(
+							dbCtx
+								.update(projects)
+								.set({ sessionCount: sql`${projects.sessionCount} - 1` })
+								.where(eq(projects.id, body.project_id)),
+						);
+					}
 				});
 				return 0;
 			}

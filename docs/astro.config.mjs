@@ -56,6 +56,7 @@ export default defineConfig({
 					items: [
 						{ label: "Local Dev", slug: "development/local" },
 						{ label: "Testing", slug: "development/testing" },
+						{ label: "Database layer", slug: "development/database" },
 					],
 				},
 				{

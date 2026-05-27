@@ -1,10 +1,10 @@
 import type { Message, MessageBatch } from "@cloudflare/workers-types";
 import { and, eq, sql } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/bun-sqlite";
 import * as fc from "fast-check";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
+import type { Database } from "../db";
 import type { QueueMessage } from "../queue/ingest-consumer";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";
@@ -38,7 +38,7 @@ class MockQueue {
 
 const mockQueue = new MockQueue();
 
-function createIngestApp(db: ReturnType<typeof drizzle>) {
+function createIngestApp(db: Database) {
 	const app = new Hono<{
 		Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string; INGEST_QUEUE: MockQueue };
 	}>();
@@ -65,7 +65,7 @@ function authHeaders() {
 }
 
 function createIngestAppWithMock(
-	db: ReturnType<typeof drizzle>,
+	db: Database,
 	opts?: { getEnv?: (c: unknown) => { FIREWORKS_API_KEY?: string; FIREWORKS_MODEL?: string } },
 ) {
 	const app = new Hono<{
@@ -549,30 +549,50 @@ describe("ingest endpoint", () => {
 
 	describe("session count invariant", () => {
 		it("session_count matches COUNT(*) after each ingest", async () => {
-			for (let i = 0; i < 5; i++) {
-				const body = {
-					session_id: `sess-inv-${i}`,
-					project_id: "proj/invariant",
-					project_name: "Inv",
-					conversation: "text",
-				};
-				const req = new Request("http://localhost/ingest", {
-					method: "POST",
-					headers: authHeaders(),
-					body: JSON.stringify(body),
-				});
-				await app.fetch(req, envVars() as unknown as Record<string, string>);
-				const proj = testDb.db
-					.select()
-					.from(projects)
-					.where(eq(projects.id, "proj/invariant"))
-					.get();
-				const actual = testDb.db
-					.select({ count: sql<number>`count(*)` })
-					.from(sessions)
-					.where(eq(sessions.projectId, "proj/invariant"))
-					.get();
-				expect(proj?.sessionCount).toBe(actual?.count);
+			const origFetch = globalThis.fetch;
+			globalThis.fetch = async () =>
+				new Response(
+					JSON.stringify({
+						choices: [{ message: { content: JSON.stringify({ facts: [] }) } }],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+
+			try {
+				for (let i = 0; i < 5; i++) {
+					const body = {
+						session_id: `sess-inv-${i}`,
+						project_id: "proj/invariant",
+						project_name: "Inv",
+						conversation: "text",
+					};
+					const req = new Request("http://localhost/ingest", {
+						method: "POST",
+						headers: authHeaders(),
+						body: JSON.stringify(body),
+					});
+					const deferred: Promise<unknown>[] = [];
+					const ctx = {
+						waitUntil: (p: Promise<unknown>) => deferred.push(Promise.resolve(p)),
+					} as unknown as import("@cloudflare/workers-types").ExecutionContext;
+
+					await app.fetch(req, envVars() as unknown as Record<string, string>, ctx);
+					await Promise.all(deferred);
+
+					const proj = testDb.db
+						.select()
+						.from(projects)
+						.where(eq(projects.id, "proj/invariant"))
+						.get();
+					const actual = testDb.db
+						.select({ count: sql<number>`count(*)` })
+						.from(sessions)
+						.where(eq(sessions.projectId, "proj/invariant"))
+						.get();
+					expect(proj?.sessionCount).toBe(actual?.count);
+				}
+			} finally {
+				globalThis.fetch = origFetch;
 			}
 		});
 	});

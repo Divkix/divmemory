@@ -1,12 +1,10 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
-import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
+import type { Database } from "../db";
+import { createDatabaseFromEnv } from "../db";
 import { memories, projects, sessions } from "../schema";
 
-type DbLike = BaseSQLiteDatabase<"sync" | "async", unknown, Record<string, unknown>>;
-
 function getDb(c: { env: { DB: D1Database } }) {
-	return drizzle(c.env.DB);
+	return createDatabaseFromEnv(c.env.DB);
 }
 
 function countExpr() {
@@ -14,48 +12,36 @@ function countExpr() {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Hono generic typing too restrictive for route tests
-export function createStatusRoute(app: any, db?: DbLike) {
+export function createStatusRoute(app: any, db?: Database) {
 	// biome-ignore lint/suspicious/noExplicitAny: Hono context types vary across runtimes
 	app.get("/status", async (c: any) => {
 		const dbCtx = db || getDb(c);
 		const projectId = c.req.query("project") as string | undefined;
 
 		if (projectId) {
-			const project = (await dbCtx
-				.select()
-				.from(projects)
-				.where(eq(projects.id, projectId))
-				.get()) as
-				| {
-						id: string;
-						name: string | null;
-						sessionCount: number | null;
-						lastSeen: string | null;
-						consolidationInProgress: number | null;
-				  }
-				| undefined;
+			const project = await dbCtx.select().from(projects).where(eq(projects.id, projectId)).get();
 
-			const sessionTotal = (await dbCtx
+			const sessionTotal = await dbCtx
 				.select({ count: countExpr() })
 				.from(sessions)
 				.where(eq(sessions.projectId, projectId))
-				.get()) as { count: number } | undefined;
-			const pending = (await dbCtx
+				.get();
+			const pending = await dbCtx
 				.select({ count: countExpr() })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, 0)))
-				.get()) as { count: number } | undefined;
-			const errors = (await dbCtx
+				.get();
+			const errors = await dbCtx
 				.select({ count: countExpr() })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, -1)))
-				.get()) as { count: number } | undefined;
-			const active = (await dbCtx
+				.get();
+			const active = await dbCtx
 				.select({ count: countExpr() })
 				.from(memories)
 				.where(and(eq(memories.projectId, projectId), eq(memories.status, "active")))
-				.get()) as { count: number } | undefined;
-			const curated = (await dbCtx
+				.get();
+			const curated = await dbCtx
 				.select({ count: countExpr() })
 				.from(memories)
 				.where(
@@ -65,13 +51,13 @@ export function createStatusRoute(app: any, db?: DbLike) {
 						eq(memories.curated, 1),
 					),
 				)
-				.get()) as { count: number } | undefined;
-			const lastError = (await dbCtx
+				.get();
+			const lastError = await dbCtx
 				.select({ error: sessions.extractionError })
 				.from(sessions)
 				.where(and(eq(sessions.projectId, projectId), eq(sessions.consolidated, -1)))
 				.orderBy(desc(sessions.createdAt))
-				.get()) as { error: string | null } | undefined;
+				.get();
 
 			return c.json({
 				project_id: projectId,
@@ -93,27 +79,23 @@ export function createStatusRoute(app: any, db?: DbLike) {
 			});
 		}
 
-		const projectTotal = (await dbCtx.select({ count: countExpr() }).from(projects).get()) as
-			| { count: number }
-			| undefined;
-		const sessionTotal = (await dbCtx.select({ count: countExpr() }).from(sessions).get()) as
-			| { count: number }
-			| undefined;
-		const pending = (await dbCtx
+		const projectTotal = await dbCtx.select({ count: countExpr() }).from(projects).get();
+		const sessionTotal = await dbCtx.select({ count: countExpr() }).from(sessions).get();
+		const pending = await dbCtx
 			.select({ count: countExpr() })
 			.from(sessions)
 			.where(eq(sessions.consolidated, 0))
-			.get()) as { count: number } | undefined;
-		const errors = (await dbCtx
+			.get();
+		const errors = await dbCtx
 			.select({ count: countExpr() })
 			.from(sessions)
 			.where(eq(sessions.consolidated, -1))
-			.get()) as { count: number } | undefined;
-		const active = (await dbCtx
+			.get();
+		const active = await dbCtx
 			.select({ count: countExpr() })
 			.from(memories)
 			.where(eq(memories.status, "active"))
-			.get()) as { count: number } | undefined;
+			.get();
 
 		return c.json({
 			projects: { total: projectTotal?.count ?? 0 },

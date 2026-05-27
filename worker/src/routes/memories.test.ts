@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth, hybridAuth } from "../auth";
+import type { Database } from "../db";
 import { memories } from "../schema";
 import { createTestDb } from "../test-helpers";
 import { createMemoriesRoute } from "./memories";
@@ -13,7 +13,7 @@ const COOKIE_SECRET = "test-cookie-secret-789";
 
 /* ───────── helpers ───────── */
 
-function createMemoriesApp(db: ReturnType<typeof drizzle>) {
+function createMemoriesApp(db: Database) {
 	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();
 	app.use("/memories/*", bearerAuth("divmemory_session"));
 	app.use("/memories", bearerAuth("divmemory_session"));
@@ -22,7 +22,7 @@ function createMemoriesApp(db: ReturnType<typeof drizzle>) {
 	return app;
 }
 
-function createWebApp(db: ReturnType<typeof drizzle>) {
+function createWebApp(db: Database) {
 	const app = new Hono<{
 		Bindings: {
 			DB: typeof db;

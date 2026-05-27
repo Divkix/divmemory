@@ -1,14 +1,14 @@
-import type { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bearerAuth } from "../auth";
+import type { Database } from "../db";
 import { GLOBAL_PROJECT_ID, memories, projects, sessions } from "../schema";
 import { createTestDb } from "../test-helpers";
 import { createContextRoute } from "./context";
 
 const TEST_API_KEY = "test-api-key-123";
 
-function createContextApp(db: ReturnType<typeof drizzle>) {
+function createContextApp(db: Database) {
 	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();
 	app.use("/context", bearerAuth("divmemory_session"));
 	createContextRoute(app, db);
@@ -24,7 +24,7 @@ function authHeaders() {
 }
 
 async function seedMemories(
-	db: ReturnType<typeof drizzle>,
+	db: Database,
 	projectId: string,
 	facts: Array<{
 		topic: string;

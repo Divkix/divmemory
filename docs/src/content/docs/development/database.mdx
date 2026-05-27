@@ -1,0 +1,47 @@
+---
+title: Database layer
+description: Typed Database seam for D1, bun-sqlite, and in-memory tests.
+---
+
+The worker uses a typed `Database` seam in `worker/src/db/` instead of the legacy untyped `DbLike` helper.
+
+## Adapters
+
+| Adapter | Runtime | Atomic writes |
+| --- | --- | --- |
+| `D1DrizzleAdapter` | Cloudflare D1 (production) | `db.batch()` (max 100 statements) |
+| `BunSQLiteAdapter` | Local unit tests (`bun:sqlite`) | Drizzle `transaction()` |
+| `InMemoryAdapter` | Fast isolated tests | Sequential `collect()` execution |
+
+Factory helpers:
+
+- `createDatabaseFromEnv(d1)` — production D1 binding (`worker/src/db/index.ts`)
+- Test adapters live in `worker/src/db/testing.ts` (not bundled for deploy)
+- `createTestDb()` in `worker/src/test-helpers.ts` — returns `BunSQLiteAdapter` wrapped as `Database`
+
+## Usage in routes
+
+Routes accept an optional `Database` for injection in tests. Production code constructs one from `env.DB`:
+
+```ts
+import { createDatabaseFromEnv } from "../db";
+import type { Database } from "../db";
+
+const db = createDatabaseFromEnv(c.env.DB);
+
+// Queries use schema-typed Drizzle (no manual casts)
+const rows = await db.select().from(memories).where(...).all();
+
+// Batched writes: reads before atomic(); only collect() inside the callback
+await db.atomic(async (collect) => {
+  collect(db.insert(memories).values({ ... }));
+});
+```
+
+Row types (`MemoryRow`, `SessionRow`, `ProjectRow`) are exported from `worker/src/db` via Drizzle `$inferSelect`.
+
+## Design rules
+
+1. **Reads before `atomic()`** — the callback receives only `collect`, not a transaction handle.
+2. **Normalized write results** — use `normalizeWriteResult()` when you need `{ changes: number }` from `.run()`.
+3. **D1 batch limit** — keep collected statements under 100 per `atomic()` call.

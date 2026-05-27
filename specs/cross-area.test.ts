@@ -1,14 +1,15 @@
-import { Database } from "bun:sqlite";
+import { Database as SqliteDatabase } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { sendIngest } from "../cli/src/cli";
 import { bearerAuth } from "../worker/src/auth";
+import { BunSQLiteAdapter } from "../worker/src/db/testing";
+import type { Database } from "../worker/src/db/types";
 import { createConsolidateRoute } from "../worker/src/routes/consolidate";
 import { createContextRoute } from "../worker/src/routes/context";
 import { createIngestRoute } from "../worker/src/routes/ingest";
@@ -19,8 +20,9 @@ const WORKER_URL = "http://localhost";
 
 /** Build an in-memory SQLite DB matching the worker schema */
 function createTestDb() {
-	const sqlite = new Database(":memory:");
-	const db = drizzle(sqlite);
+	const sqlite = new SqliteDatabase(":memory:");
+	sqlite.exec("PRAGMA foreign_keys = ON;");
+	const db = new BunSQLiteAdapter(sqlite).asDatabase();
 	sqlite.exec(`
 		CREATE TABLE projects (
 			id TEXT PRIMARY KEY NOT NULL,
@@ -66,7 +68,7 @@ function createTestDb() {
 }
 
 /** Create a full in-memory Hono app wired with ingest, context, and consolidate routes */
-function createFullWorkerApp(db: ReturnType<typeof drizzle>) {
+function createFullWorkerApp(db: Database) {
 	const app = new Hono<{ Bindings: { DB: typeof db; DIVMEMORY_API_KEY: string } }>();
 	app.use("/ingest", bearerAuth("divmemory_session"));
 	app.use("/context", bearerAuth("divmemory_session"));
@@ -137,12 +139,7 @@ function restoreGlobalFetch() {
 }
 
 /** Seed a memory directly into the in-memory DB */
-function seedMemory(
-	db: ReturnType<typeof drizzle>,
-	projectId: string,
-	content: string,
-	topic = "general",
-) {
+function seedMemory(db: Database, projectId: string, content: string, topic = "general") {
 	const sessionId = crypto.randomUUID();
 	db.insert(sessions)
 		.values({
