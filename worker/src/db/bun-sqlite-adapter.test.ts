@@ -65,8 +65,8 @@ describe("BunSQLiteAdapter", () => {
 	it("atomic rolls back on error", async () => {
 		const db = createInMemoryDatabase();
 		const now = new Date().toISOString();
-		try {
-			await db.atomic(async (collect) => {
+		await expect(
+			db.atomic(async (collect) => {
 				collect(
 					db.client.insert(projects).values({
 						id: "proj-c",
@@ -101,13 +101,14 @@ describe("BunSQLiteAdapter", () => {
 					}),
 				);
 				throw new Error("force rollback");
-			});
-		} catch (err) {
-			expect((err as Error).message).toBe("force rollback");
-		}
+			}),
+		).rejects.toThrow("force rollback");
+
 		const projRows = await db.client.select().from(projects).all();
+		const sessRows = await db.client.select().from(sessions).all();
 		const memRows = await db.client.select().from(memories).all();
 		expect(projRows).toHaveLength(0);
+		expect(sessRows).toHaveLength(0);
 		expect(memRows).toHaveLength(0);
 	});
 

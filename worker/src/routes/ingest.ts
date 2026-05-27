@@ -561,8 +561,13 @@ export function createIngestRoute(
 				if (unconsol >= 5) {
 					const promise = triggerConsolidation(body.project_id, dbCtx, c);
 					if (promise instanceof Promise) {
-						const wc = c.executionCtx as { waitUntil?: (p: Promise<unknown>) => void };
-						if (typeof wc.waitUntil === "function") {
+						let wc: { waitUntil?: (p: Promise<unknown>) => void } | undefined;
+						try {
+							wc = c.executionCtx;
+						} catch {
+							// ignore if execution context is absent
+						}
+						if (wc && typeof wc.waitUntil === "function") {
 							wc.waitUntil(
 								promise.catch((err) => {
 									console.error("[Auto-Consolidation] Inline trigger failed:", err);

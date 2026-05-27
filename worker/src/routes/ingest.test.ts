@@ -571,7 +571,14 @@ describe("ingest endpoint", () => {
 						headers: authHeaders(),
 						body: JSON.stringify(body),
 					});
-					await app.fetch(req, envVars() as unknown as Record<string, string>);
+					const deferred: Promise<unknown>[] = [];
+					const ctx = {
+						waitUntil: (p: Promise<unknown>) => deferred.push(Promise.resolve(p)),
+					} as unknown as import("@cloudflare/workers-types").ExecutionContext;
+
+					await app.fetch(req, envVars() as unknown as Record<string, string>, ctx);
+					await Promise.all(deferred);
+
 					const proj = testDb.db
 						.select()
 						.from(projects)
